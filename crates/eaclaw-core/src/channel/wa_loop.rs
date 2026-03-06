@@ -3,6 +3,7 @@
 //! Receives messages from WhatsAppChannel, routes through Gateway,
 //! calls LLM for forwarded messages, and sends responses back.
 
+use crate::agent::ainur;
 use crate::channel::gateway::{Action, Gateway};
 use crate::channel::types::GroupChannel;
 use crate::channel::whatsapp::WhatsAppChannel;
@@ -83,6 +84,43 @@ pub async fn run(
                 sender_name,
                 context,
             } => {
+                // Check for /ainur command
+                if let Some((count, task)) = ainur::parse_ainur(&text) {
+                    eprintln!(
+                        "  ⚡ Triggered by {sender_name} — /ainur {count}..."
+                    );
+                    let on_status: ainur::OnStatus = Box::new(|s: &str| {
+                        eprintln!("  {s}");
+                    });
+                    let response_text = match ainur::execute(
+                        count,
+                        task,
+                        &llm,
+                        tools,
+                        &mut safety,
+                        &tool_defs,
+                        &system_prompt,
+                        config.max_turns,
+                        on_status,
+                    )
+                    .await
+                    {
+                        Ok(text) => text,
+                        Err(e) => {
+                            eprintln!("  ✗ Ainur error: {e}");
+                            format!("Ainur error: {e}")
+                        }
+                    };
+                    channel.send(&processed.jid, &response_text).await;
+                    gateway.record_response(&processed.jid, &response_text);
+                    eprintln!(
+                        "  → [{jid}] eaclaw: {text}",
+                        jid = short_jid(&processed.jid),
+                        text = truncate(&response_text, 120),
+                    );
+                    continue;
+                }
+
                 eprintln!(
                     "  ⚡ Triggered by {sender_name} — calling LLM..."
                 );

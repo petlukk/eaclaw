@@ -1,3 +1,4 @@
+pub mod ainur;
 pub mod background;
 pub mod router;
 mod tool_dispatch;
@@ -103,6 +104,35 @@ impl Agent {
                 Some(m) => m,
                 None => break,
             };
+
+            // /ainur N <task> — parallel multi-agent orchestration
+            if let Some((count, task)) = ainur::parse_ainur(&msg) {
+                let on_status: ainur::OnStatus = Box::new(|s: &str| {
+                    eprintln!("  {s}");
+                });
+                match ainur::execute(
+                    count,
+                    task,
+                    &self.llm,
+                    &self.tools,
+                    &mut self.safety,
+                    &tool_defs,
+                    &self.system_prompt,
+                    self.config.max_turns,
+                    on_status,
+                )
+                .await
+                {
+                    Ok(response) => {
+                        self.recall_store.insert(&response);
+                        channel.send(&response).await;
+                    }
+                    Err(e) => {
+                        channel.send(&format!("Ainur error: {e}")).await;
+                    }
+                }
+                continue;
+            }
 
             // Pipeline detection: split on " | /" before routing
             if msg.starts_with(&self.config.command_prefix) && msg.contains(" | /") {
@@ -486,6 +516,7 @@ Tools:
   /memory <action> [key] [value]   /read <path>   /write <path> <content>
   /ls [path]  /json <action> <input> [path]  /tokens <text>  /bench <target>
 
+Parallel: /ainur <N> <task>  — N parallel workers (1-10)
 Background: append & (e.g. /shell sleep 5 &)
 Pipelines: /shell ls | /tokens
 
