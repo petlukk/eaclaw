@@ -1,5 +1,6 @@
 use crate::error::{Error, Result};
 use std::env;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -8,6 +9,10 @@ pub struct Config {
     pub agent_name: String,
     pub max_turns: usize,
     pub command_prefix: String,
+    /// Optional identity text prepended to the system prompt.
+    pub identity: Option<String>,
+    /// Allowed HTTP hosts. Empty = allow all.
+    pub allowed_hosts: Vec<String>,
 }
 
 impl Config {
@@ -30,12 +35,54 @@ impl Config {
         let command_prefix = env::var("COMMAND_PREFIX")
             .unwrap_or_else(|_| "/".into());
 
+        let identity = load_identity();
+        let allowed_hosts = load_allowed_hosts();
+
         Ok(Self {
             api_key,
             model,
             agent_name,
             max_turns,
             command_prefix,
+            identity,
+            allowed_hosts,
         })
     }
+}
+
+/// Load identity from EACLAW_IDENTITY env var path or ~/.eaclaw/identity.md.
+fn load_identity() -> Option<String> {
+    let path = if let Ok(p) = env::var("EACLAW_IDENTITY") {
+        PathBuf::from(p)
+    } else {
+        dirs()?.join("identity.md")
+    };
+    std::fs::read_to_string(&path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Load allowed hosts from EACLAW_ALLOWED_HOSTS env var (comma-separated)
+/// or ~/.eaclaw/allowed_hosts.txt (one per line).
+fn load_allowed_hosts() -> Vec<String> {
+    if let Ok(hosts) = env::var("EACLAW_ALLOWED_HOSTS") {
+        return hosts
+            .split(',')
+            .map(|h| h.trim().to_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect();
+    }
+    if let Some(path) = dirs().map(|d| d.join("allowed_hosts.txt")) {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            return content
+                .lines()
+                .map(|l| l.trim().to_lowercase())
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+/// Returns ~/.eaclaw/ directory path.
+fn dirs() -> Option<PathBuf> {
+    home::home_dir().map(|h| h.join(".eaclaw"))
 }

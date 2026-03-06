@@ -15,7 +15,7 @@ use crate::tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Instant;
 
-const SYSTEM_PROMPT: &str = "\
+const BASE_SYSTEM_PROMPT: &str = "\
 You are eaclaw, a high-performance AI assistant. \
 You have access to tools that you can use to help the user. \
 Be concise and helpful. Use tools when they would help answer the user's question.";
@@ -57,6 +57,7 @@ pub struct Agent {
     last_timing: Option<TurnTiming>,
     bg_tasks: background::TaskTable,
     pub(crate) tokenizer: ArgTokenizer,
+    system_prompt: String,
 }
 
 impl Agent {
@@ -66,6 +67,10 @@ impl Agent {
         tools: ToolRegistry,
         safety: SafetyLayer,
     ) -> Self {
+        let system_prompt = match &config.identity {
+            Some(identity) => format!("{BASE_SYSTEM_PROMPT}\n\n{identity}"),
+            None => BASE_SYSTEM_PROMPT.to_string(),
+        };
         Self {
             config,
             llm,
@@ -75,6 +80,7 @@ impl Agent {
             last_timing: None,
             bg_tasks: background::TaskTable::new(),
             tokenizer: ArgTokenizer::with_capacity(256),
+            system_prompt,
         }
     }
 
@@ -365,7 +371,7 @@ impl Agent {
 
                 match self
                     .llm
-                    .chat_stream(&self.messages, tool_defs, SYSTEM_PROMPT, &mut on_text)
+                    .chat_stream(&self.messages, tool_defs, &self.system_prompt, &mut on_text)
                     .await
                 {
                     Ok(r) => r,

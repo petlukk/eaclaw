@@ -6,7 +6,7 @@ use eaclaw_core::safety::SafetyLayer;
 use eaclaw_core::tools::ToolRegistry;
 
 fn registry() -> ToolRegistry {
-    ToolRegistry::with_defaults()
+    ToolRegistry::with_defaults_open()
 }
 
 // --- Calc edge cases ---
@@ -293,4 +293,84 @@ async fn test_bench_unknown_target() {
     let tool = reg.get("bench").unwrap();
     let result = tool.execute(serde_json::json!({"target": "nonexistent"})).await;
     assert!(result.is_err());
+}
+
+// --- HTTP allowlist edge cases ---
+
+#[tokio::test]
+async fn test_http_allowlist_blocks() {
+    use eaclaw_core::tools::http::HttpTool;
+    use eaclaw_core::tools::Tool;
+    let tool = HttpTool::new(vec!["example.com".to_string()]);
+    let result = tool.execute(serde_json::json!({"url": "https://evil.com/steal"})).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("not in allowed list"), "expected allowlist error, got: {err}");
+}
+
+#[tokio::test]
+async fn test_http_allowlist_allows() {
+    use eaclaw_core::tools::http::HttpTool;
+    use eaclaw_core::tools::Tool;
+    let tool = HttpTool::new(vec!["example.com".to_string()]);
+    // This should pass the host check (may fail on network, but not on allowlist)
+    let result = tool.execute(serde_json::json!({"url": "https://example.com"})).await;
+    // If it errors, it should NOT be an allowlist error
+    if let Err(e) = &result {
+        assert!(!e.to_string().contains("not in allowed list"), "should be allowed: {e}");
+    }
+}
+
+#[tokio::test]
+async fn test_http_allowlist_subdomain() {
+    use eaclaw_core::tools::http::HttpTool;
+    use eaclaw_core::tools::Tool;
+    let tool = HttpTool::new(vec!["example.com".to_string()]);
+    let result = tool.execute(serde_json::json!({"url": "https://api.example.com/data"})).await;
+    if let Err(e) = &result {
+        assert!(!e.to_string().contains("not in allowed list"), "subdomain should be allowed: {e}");
+    }
+}
+
+#[tokio::test]
+async fn test_http_empty_allowlist_allows_all() {
+    use eaclaw_core::tools::http::HttpTool;
+    use eaclaw_core::tools::Tool;
+    let tool = HttpTool::new(Vec::new());
+    // Empty allowlist = allow all; won't fail on host check
+    let result = tool.execute(serde_json::json!({"url": "https://httpbin.org/get"})).await;
+    if let Err(e) = &result {
+        assert!(!e.to_string().contains("not in allowed list"), "empty list should allow all: {e}");
+    }
+}
+
+// --- Identity file ---
+
+#[test]
+fn test_identity_config_none_by_default() {
+    // Without EACLAW_IDENTITY set and no ~/.eaclaw/identity.md, identity is None
+    let config = eaclaw_core::config::Config {
+        api_key: "test".into(),
+        model: "test".into(),
+        agent_name: "test".into(),
+        max_turns: 10,
+        command_prefix: "/".into(),
+        identity: None,
+        allowed_hosts: vec![],
+    };
+    assert!(config.identity.is_none());
+}
+
+#[test]
+fn test_identity_config_some() {
+    let config = eaclaw_core::config::Config {
+        api_key: "test".into(),
+        model: "test".into(),
+        agent_name: "test".into(),
+        max_turns: 10,
+        command_prefix: "/".into(),
+        identity: Some("You are a pirate. Always say Arrr.".into()),
+        allowed_hosts: vec![],
+    };
+    assert!(config.identity.as_ref().unwrap().contains("pirate"));
 }

@@ -27,7 +27,7 @@ async fn main() {
     let llm: Arc<dyn eaclaw_core::llm::LlmProvider> =
         Arc::new(AnthropicProvider::new(&config));
 
-    let tools = ToolRegistry::with_defaults();
+    let tools = ToolRegistry::with_defaults(&config);
     let safety = SafetyLayer::new();
     let channel = ReplChannel::new(&config.agent_name);
 

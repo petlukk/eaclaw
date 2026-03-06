@@ -2,7 +2,40 @@ use super::Tool;
 use async_trait::async_trait;
 use futures::StreamExt;
 
-pub struct HttpTool;
+pub struct HttpTool {
+    /// Allowed hosts. Empty = allow all.
+    allowed_hosts: Vec<String>,
+}
+
+impl HttpTool {
+    pub fn new(allowed_hosts: Vec<String>) -> Self {
+        Self { allowed_hosts }
+    }
+
+    fn check_host(&self, url: &str) -> crate::error::Result<()> {
+        if self.allowed_hosts.is_empty() {
+            return Ok(());
+        }
+        let host = url
+            .split("://")
+            .nth(1)
+            .unwrap_or(url)
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        if self.allowed_hosts.iter().any(|h| host == *h || host.ends_with(&format!(".{h}"))) {
+            Ok(())
+        } else {
+            Err(crate::error::Error::Tool(format!(
+                "host '{host}' not in allowed list. Set EACLAW_ALLOWED_HOSTS or ~/.eaclaw/allowed_hosts.txt"
+            )))
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for HttpTool {
@@ -32,6 +65,7 @@ impl Tool for HttpTool {
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'url' parameter".into()))?;
 
+        self.check_host(url)?;
         let response = reqwest::get(url).await?;
         let status = response.status();
         let body = response.text().await?;
@@ -60,6 +94,7 @@ impl Tool for HttpTool {
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'url' parameter".into()))?;
 
+        self.check_host(url)?;
         let response = reqwest::get(url).await?;
         let status = response.status();
         on_chunk(&format!("HTTP {status}\n"));

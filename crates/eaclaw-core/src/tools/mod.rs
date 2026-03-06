@@ -11,6 +11,7 @@ pub mod time;
 pub mod tokens;
 pub mod write_file;
 
+use crate::config::Config;
 use crate::error::Result;
 use crate::llm::ToolDef;
 use async_trait::async_trait;
@@ -63,12 +64,30 @@ impl ToolRegistry {
         }
     }
 
-    /// Create a registry with all default tools.
-    pub fn with_defaults() -> Self {
+    /// Create a registry with all default tools (no host restrictions).
+    pub fn with_defaults_open() -> Self {
         let mut reg = Self::new();
         reg.register(Arc::new(time::TimeTool));
         reg.register(Arc::new(calc::CalcTool));
-        reg.register(Arc::new(http::HttpTool));
+        reg.register(Arc::new(http::HttpTool::new(Vec::new())));
+        reg.register(Arc::new(shell::ShellTool));
+        reg.register(Arc::new(memory::MemoryTool::new()));
+        reg.register(Arc::new(read_file::ReadFileTool));
+        reg.register(Arc::new(write_file::WriteFileTool));
+        reg.register(Arc::new(ls::LsTool));
+        reg.register(Arc::new(json_tool::JsonTool));
+        reg.register(Arc::new(cpu::CpuTool));
+        reg.register(Arc::new(tokens::TokensTool));
+        reg.register(Arc::new(bench_tool::BenchTool));
+        reg
+    }
+
+    /// Create a registry with all default tools using config.
+    pub fn with_defaults(config: &Config) -> Self {
+        let mut reg = Self::new();
+        reg.register(Arc::new(time::TimeTool));
+        reg.register(Arc::new(calc::CalcTool));
+        reg.register(Arc::new(http::HttpTool::new(config.allowed_hosts.clone())));
         reg.register(Arc::new(shell::ShellTool));
         reg.register(Arc::new(memory::MemoryTool::new()));
         reg.register(Arc::new(read_file::ReadFileTool));
