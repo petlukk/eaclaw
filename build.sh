@@ -19,3 +19,14 @@ done
 
 echo "Done. Kernels in $OUT_DIR/"
 ls -la "$OUT_DIR/"
+
+# Build WhatsApp bridge (requires Go)
+if command -v go &>/dev/null; then
+    echo ""
+    echo "Building WhatsApp bridge..."
+    (cd bridge && go build -o ../target/debug/eaclaw-bridge .)
+    echo "  bridge/main.go → target/debug/eaclaw-bridge"
+else
+    echo ""
+    echo "Skipping WhatsApp bridge (Go not installed)"
+fi
