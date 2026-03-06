@@ -92,34 +92,76 @@ pub async fn run(
                     eprintln!(
                         "  ⚡ Triggered by {sender_name} — /ainur {count}..."
                     );
-                    let on_status: ainur::OnStatus = Box::new(|s: &str| {
-                        eprintln!("  {s}");
+
+                    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
+                    let llm2 = llm.clone();
+                    let tools2 = tools.clone();
+                    let td2 = tool_defs.clone();
+                    let sys2 = system_prompt.clone();
+                    let mt = config.max_turns;
+                    let task_str = task.to_string();
+
+                    let ainur_handle = tokio::spawn(async move {
+                        let mut s = SafetyLayer::new();
+                        ainur::execute(
+                            count, &task_str, &llm2, &tools2, &mut s,
+                            &td2, &sys2, mt, event_tx,
+                        ).await
                     });
-                    let response_text = match ainur::execute(
-                        count,
-                        task,
-                        &llm,
-                        tools,
-                        &mut safety,
-                        &tool_defs,
-                        &system_prompt,
-                        config.max_turns,
-                        on_status,
-                    )
-                    .await
-                    {
-                        Ok(text) => text,
-                        Err(e) => {
+
+                    // Drain events — send to both terminal and WhatsApp
+                    let jid = processed.jid.clone();
+                    while let Some(event) = event_rx.recv().await {
+                        let chat_msg = match &event {
+                            ainur::AinurEvent::Planning => {
+                                eprintln!("  /ainur {count} — decomposing task...");
+                                Some(format!("🎵 /ainur {count} — decomposing task..."))
+                            }
+                            ainur::AinurEvent::Planned { subtasks } => {
+                                let lines: Vec<String> = subtasks.iter().enumerate()
+                                    .map(|(i, s)| format!("♪ Ainur {}/{count}: {s}", i + 1))
+                                    .collect();
+                                let msg = lines.join("\n");
+                                eprintln!("{}", lines.iter().map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n"));
+                                Some(msg)
+                            }
+                            ainur::AinurEvent::WorkerProgress { index, total, status } => {
+                                eprintln!("  ♪ Ainur {}/{total} {status}", index + 1);
+                                Some(format!("♪ Ainur {}/{total} {status}", index + 1))
+                            }
+                            ainur::AinurEvent::WorkerDone { index, total } => {
+                                eprintln!("  ♪ Ainur {}/{total} ✓", index + 1);
+                                Some(format!("♪ Ainur {}/{total} ✓", index + 1))
+                            }
+                            ainur::AinurEvent::Merging => {
+                                eprintln!("  ♪ All voices complete — merging...");
+                                Some("🎵 All voices complete — merging...".into())
+                            }
+                            ainur::AinurEvent::RateLimitWait { seconds } => {
+                                eprintln!("  ⏳ Rate limit — waiting {seconds}s...");
+                                Some(format!("⏳ Rate limit — waiting {seconds}s..."))
+                            }
+                        };
+                        if let Some(msg) = chat_msg {
+                            channel.send(&jid, &msg).await;
+                        }
+                    }
+
+                    let response_text = match ainur_handle.await {
+                        Ok(Ok(text)) => text,
+                        Ok(Err(e)) => {
                             eprintln!("  ✗ Ainur error: {e}");
                             format!("Ainur error: {e}")
                         }
+                        Err(e) => format!("Ainur task error: {e}"),
                     };
+
                     channel.send(&processed.jid, &response_text).await;
                     gateway.record_response(&processed.jid, &response_text);
                     eprintln!(
-                        "  → [{jid}] eaclaw: {text}",
+                        "  → [{jid}] eaclaw: {resp}",
                         jid = short_jid(&processed.jid),
-                        text = truncate(&response_text, 120),
+                        resp = truncate(&response_text, 120),
                     );
                     continue;
                 }

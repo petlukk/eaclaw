@@ -14,6 +14,7 @@ use crate::llm::{ContentBlock, LlmProvider, Message, Role, StopReason, ToolDef};
 use crate::safety::SafetyLayer;
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 const PLANNER_PROMPT: &str = "\
 You are a task decomposition planner. Given a task and a number N, \
@@ -36,7 +37,6 @@ Use the worker results as-is — do not hallucinate additional information.";
 pub fn parse_ainur(input: &str) -> Option<(usize, &str)> {
     let rest = input.strip_prefix("/ainur ")?;
     let rest = rest.trim_start();
-    // First token is the count
     let space = rest.find(' ')?;
     let count: usize = rest[..space].parse().ok()?;
     if count == 0 || count > 10 {
@@ -49,10 +49,25 @@ pub fn parse_ainur(input: &str) -> Option<(usize, &str)> {
     Some((count, task))
 }
 
-/// Status callback type for reporting progress.
-pub type OnStatus = Box<dyn Fn(&str) + Send>;
+/// Progress events emitted during ainur execution.
+#[derive(Debug, Clone)]
+pub enum AinurEvent {
+    /// Planning phase started.
+    Planning,
+    /// Subtasks determined by the planner.
+    Planned { subtasks: Vec<String> },
+    /// A worker started or is using a tool.
+    WorkerProgress { index: usize, total: usize, status: String },
+    /// A worker completed.
+    WorkerDone { index: usize, total: usize },
+    /// All workers done, merging.
+    Merging,
+    /// Rate limit hit, waiting before retry.
+    RateLimitWait { seconds: u64 },
+}
 
 /// Execute the ainur pipeline: plan → parallel workers → merge.
+/// Progress events are sent to `event_tx` for live updates.
 pub async fn execute(
     count: usize,
     task: &str,
@@ -62,10 +77,10 @@ pub async fn execute(
     tool_defs: &[ToolDef],
     system_prompt: &str,
     max_turns: usize,
-    on_status: OnStatus,
+    event_tx: mpsc::Sender<AinurEvent>,
 ) -> Result<String> {
     // 1. Plan: decompose into subtasks
-    on_status(&format!("/ainur {count} — decomposing task..."));
+    let _ = event_tx.send(AinurEvent::Planning).await;
 
     let subtasks = plan(count, task, llm).await?;
 
@@ -76,12 +91,10 @@ pub async fn execute(
         )));
     }
 
-    for (i, sub) in subtasks.iter().enumerate() {
-        on_status(&format!("♪ Ainur {}/{count}: {sub}", i + 1));
-    }
+    let _ = event_tx.send(AinurEvent::Planned { subtasks: subtasks.clone() }).await;
 
     // 2. Execute workers with staggered starts (avoid rate limit bursts)
-    let stagger_ms = 2000; // 2s between worker starts
+    let stagger_ms = 2000;
     let worker_futures: Vec<_> = subtasks
         .iter()
         .enumerate()
@@ -92,11 +105,17 @@ pub async fn execute(
             let subtask = subtask.clone();
             let tools = tools.clone();
             let delay = i as u64 * stagger_ms;
+            let tx = event_tx.clone();
+            let total = count;
 
             tokio::spawn(async move {
                 if delay > 0 {
                     tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
                 }
+                let _ = tx.send(AinurEvent::WorkerProgress {
+                    index: i, total, status: "thinking...".into(),
+                }).await;
+
                 let result = run_worker(
                     &llm,
                     &subtask,
@@ -104,8 +123,13 @@ pub async fn execute(
                     &tool_defs,
                     &system,
                     max_turns,
+                    i,
+                    total,
+                    &tx,
                 )
                 .await;
+
+                let _ = tx.send(AinurEvent::WorkerDone { index: i, total }).await;
                 (i, result)
             })
         })
@@ -121,10 +145,10 @@ pub async fn execute(
     }
     results.sort_by_key(|(i, _)| *i);
 
-    on_status("♪ All voices complete — merging...");
+    let _ = event_tx.send(AinurEvent::Merging).await;
 
     // 3. Merge results
-    let merged = merge(&results, &subtasks, task, llm).await?;
+    let merged = merge(&results, &subtasks, task, llm, &event_tx).await?;
 
     // Safety scan on final output
     let scan = safety.scan_output(&merged);
@@ -143,9 +167,7 @@ async fn plan(
 ) -> Result<Vec<String>> {
     let messages = vec![Message {
         role: Role::User,
-        content: vec![ContentBlock::text(format!(
-            "N={count}\nTask: {task}"
-        ))],
+        content: vec![ContentBlock::text(format!("N={count}\nTask: {task}"))],
     }];
 
     let response = llm.chat(&messages, &[], PLANNER_PROMPT).await?;
@@ -159,9 +181,7 @@ async fn plan(
         })
         .collect::<String>();
 
-    // Parse JSON array from response
     let text = text.trim();
-    // Strip markdown code fences if present
     let text = text
         .strip_prefix("```json")
         .or_else(|| text.strip_prefix("```"))
@@ -169,9 +189,7 @@ async fn plan(
     let text = text.strip_suffix("```").unwrap_or(text).trim();
 
     let subtasks: Vec<String> = serde_json::from_str(text).map_err(|e| {
-        Error::Tool(format!(
-            "planner returned invalid JSON: {e}\nResponse: {text}"
-        ))
+        Error::Tool(format!("planner returned invalid JSON: {e}\nResponse: {text}"))
     })?;
 
     Ok(subtasks)
@@ -185,7 +203,16 @@ async fn run_worker(
     tool_defs: &[ToolDef],
     system: &str,
     max_turns: usize,
+    index: usize,
+    total: usize,
+    event_tx: &mpsc::Sender<AinurEvent>,
 ) -> Result<String> {
+    let worker_system = format!(
+        "{system}\n\nYou are one of {total} parallel workers. \
+         Be concise — summarize findings in 2-3 short paragraphs max. \
+         Do not repeat the question or add preamble."
+    );
+
     let mut messages = vec![Message {
         role: Role::User,
         content: vec![ContentBlock::text(subtask)],
@@ -198,7 +225,7 @@ async fn run_worker(
         }
         turns += 1;
 
-        let response = llm.chat(&messages, tool_defs, system).await?;
+        let response = llm.chat(&messages, tool_defs, &worker_system).await?;
 
         let mut tool_uses = Vec::new();
         let mut text_parts = Vec::new();
@@ -229,6 +256,14 @@ async fn run_worker(
             return Ok(text_parts.join(""));
         }
 
+        // Report tool use
+        let tool_names: Vec<&str> = tool_uses.iter().map(|(_, n, _)| n.as_str()).collect();
+        let _ = event_tx.send(AinurEvent::WorkerProgress {
+            index,
+            total,
+            status: format!("using {}", tool_names.join(", ")),
+        }).await;
+
         // Execute tools
         let mut result_blocks = Vec::new();
         for (id, name, input) in &tool_uses {
@@ -250,8 +285,7 @@ async fn run_worker(
 }
 
 /// Max characters per worker result in the merge prompt.
-/// Keeps total merge input under ~8K tokens even with 10 workers.
-const MAX_WORKER_CHARS: usize = 2000;
+const MAX_WORKER_CHARS: usize = 1500;
 
 /// Merger: combine worker results into a cohesive response.
 async fn merge(
@@ -259,6 +293,7 @@ async fn merge(
     subtasks: &[String],
     original_task: &str,
     llm: &Arc<dyn LlmProvider>,
+    event_tx: &mpsc::Sender<AinurEvent>,
 ) -> Result<String> {
     let mut worker_text = String::new();
     for (i, (_, result)) in results.iter().enumerate() {
@@ -284,16 +319,17 @@ async fn merge(
         ))],
     }];
 
-    // Retry on rate limit — workers may have exhausted the per-minute budget.
-    // Wait up to 60s total (two retries at 15s and 30s).
+    // Retry on rate limit — wait full 60s for window reset, then one more try
     let response = match llm.chat(&messages, &[], MERGER_PROMPT).await {
         Ok(r) => r,
         Err(e) if e.to_string().contains("rate limit") => {
-            tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+            let _ = event_tx.send(AinurEvent::RateLimitWait { seconds: 60 }).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
             match llm.chat(&messages, &[], MERGER_PROMPT).await {
                 Ok(r) => r,
                 Err(e) if e.to_string().contains("rate limit") => {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                    let _ = event_tx.send(AinurEvent::RateLimitWait { seconds: 60 }).await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
                     llm.chat(&messages, &[], MERGER_PROMPT).await?
                 }
                 Err(e) => return Err(e),
