@@ -30,7 +30,13 @@ pub const CMD_TOOL_FIRST: i32 = CMD_TIME;
 pub const CMD_TOOL_LAST: i32 = CMD_BENCH;
 
 /// Full command names for two-stage verification.
-const TOOL_CMD_NAMES: &[(i32, &str)] = &[
+const ALL_CMD_NAMES: &[(i32, &str)] = &[
+    (CMD_HELP, "help"),
+    (CMD_QUIT, "quit"),
+    (CMD_TOOLS, "tools"),
+    (CMD_CLEAR, "clear"),
+    (CMD_MODEL, "model"),
+    (CMD_PROFILE, "profile"),
     (CMD_TIME, "time"),
     (CMD_CALC, "calc"),
     (CMD_HTTP, "http"),
@@ -43,6 +49,7 @@ const TOOL_CMD_NAMES: &[(i32, &str)] = &[
     (CMD_CPU, "cpu"),
     (CMD_TOKENS, "tokens"),
     (CMD_BENCH, "bench"),
+    (CMD_TASKS, "tasks"),
 ];
 
 /// Match a slash command using the SIMD kernel.
@@ -57,18 +64,16 @@ pub fn match_command(text: &[u8]) -> i32 {
 }
 
 /// Two-stage match: SIMD hash + full name verification.
-/// For tool commands, verifies the full command name matches
-/// to handle potential hash collisions.
+/// Verifies the full command name matches to handle potential hash collisions.
 /// Returns (command_id, argument) where argument is the text after the command.
 pub fn match_command_verified(text: &[u8]) -> (i32, &[u8]) {
     let cmd_id = match_command(text);
-    if cmd_id < CMD_TOOL_FIRST || cmd_id > CMD_TOOL_LAST {
-        // Meta commands (0-5) or no match — no verification needed
-        return (cmd_id, &[]);
+    if cmd_id == CMD_NONE {
+        return (CMD_NONE, &[]);
     }
 
-    // Verify the full command name
-    for &(id, name) in TOOL_CMD_NAMES {
+    // Verify the full command name for ALL commands
+    for &(id, name) in ALL_CMD_NAMES {
         if id != cmd_id {
             continue;
         }

@@ -30,6 +30,10 @@ impl Tool for CalcTool {
         let expr = params["expr"]
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'expr' parameter".into()))?;
+        // Try integer arithmetic first for exact results on whole numbers
+        if let Ok(v) = eval_int(expr) {
+            return Ok(format!("{v}"));
+        }
         match eval(expr) {
             Ok(v) => {
                 if v == v.floor() && v.abs() < 1e15 {
@@ -40,6 +44,93 @@ impl Tool for CalcTool {
             }
             Err(e) => Err(crate::error::Error::Tool(format!("calc: {e}"))),
         }
+    }
+}
+
+// Integer evaluator using i128 for exact arithmetic on whole numbers.
+// Returns Err if the expression contains floats or results in non-integer values.
+fn eval_int(input: &str) -> std::result::Result<i128, String> {
+    let tokens = tokenize(input)?;
+    // Reject if any token is a non-integer number
+    for t in &tokens {
+        if let Token::Num(n) = t {
+            if *n != n.floor() || n.abs() > i128::MAX as f64 {
+                return Err("not integer".into());
+            }
+        }
+    }
+    let mut pos = 0;
+    let result = parse_expr_int(&tokens, &mut pos)?;
+    if pos < tokens.len() {
+        return Err(format!("unexpected token: {:?}", tokens[pos]));
+    }
+    Ok(result)
+}
+
+fn parse_expr_int(tokens: &[Token], pos: &mut usize) -> std::result::Result<i128, String> {
+    let mut left = parse_term_int(tokens, pos)?;
+    while *pos < tokens.len() {
+        match &tokens[*pos] {
+            Token::Op('+') => { *pos += 1; left = left.checked_add(parse_term_int(tokens, pos)?).ok_or("overflow")?; }
+            Token::Op('-') => { *pos += 1; left = left.checked_sub(parse_term_int(tokens, pos)?).ok_or("overflow")?; }
+            _ => break,
+        }
+    }
+    Ok(left)
+}
+
+fn parse_term_int(tokens: &[Token], pos: &mut usize) -> std::result::Result<i128, String> {
+    let mut left = parse_unary_int(tokens, pos)?;
+    while *pos < tokens.len() {
+        match &tokens[*pos] {
+            Token::Op('*') => { *pos += 1; left = left.checked_mul(parse_unary_int(tokens, pos)?).ok_or("overflow")?; }
+            Token::Op('/') => {
+                *pos += 1;
+                let r = parse_unary_int(tokens, pos)?;
+                if r == 0 { return Err("division by zero".into()); }
+                if left % r != 0 { return Err("not integer".into()); }
+                left /= r;
+            }
+            Token::Op('%') => {
+                *pos += 1;
+                let r = parse_unary_int(tokens, pos)?;
+                if r == 0 { return Err("modulo by zero".into()); }
+                left %= r;
+            }
+            _ => break,
+        }
+    }
+    Ok(left)
+}
+
+fn parse_unary_int(tokens: &[Token], pos: &mut usize) -> std::result::Result<i128, String> {
+    if *pos < tokens.len() {
+        if let Token::Op('-') = &tokens[*pos] {
+            *pos += 1;
+            return Ok(-parse_unary_int(tokens, pos)?);
+        }
+    }
+    parse_atom_int(tokens, pos)
+}
+
+fn parse_atom_int(tokens: &[Token], pos: &mut usize) -> std::result::Result<i128, String> {
+    if *pos >= tokens.len() {
+        return Err("unexpected end of expression".into());
+    }
+    match &tokens[*pos] {
+        Token::Num(n) => { let v = *n as i128; *pos += 1; Ok(v) }
+        Token::LParen => {
+            *pos += 1;
+            let v = parse_expr_int(tokens, pos)?;
+            if *pos >= tokens.len() {
+                return Err("missing closing parenthesis".into());
+            }
+            match &tokens[*pos] {
+                Token::RParen => { *pos += 1; Ok(v) }
+                _ => Err("expected closing parenthesis".into()),
+            }
+        }
+        t => Err(format!("unexpected token: {t:?}")),
     }
 }
 
