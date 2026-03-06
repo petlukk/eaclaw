@@ -224,6 +224,13 @@ Tool outputs are also scanned for secret leaks before display.
 
 Ring buffer (1024 entries) with recency boost ensures recent conversation context is preferred.
 
+## Acknowledgements
+
+eaclaw draws inspiration from:
+
+- **[ironclaw](https://github.com/nearai/ironclaw)** — Rust agent framework with tool pipelines and safety scanning
+- **[nanoclaw](https://github.com/qwibitai/nanoclaw)** — WhatsApp agent integration via whatsmeow bridge
+
 ## License
 
 MIT
