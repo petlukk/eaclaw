@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::error::Result;
 use crate::kernels::arg_tokenizer::ArgTokenizer;
 use crate::kernels::command_router as cmd_router;
+use crate::recall::VectorStore;
 use crate::llm::{
     ContentBlock, LlmProvider, Message, Role, StopReason, ToolDef,
 };
@@ -58,6 +59,7 @@ pub struct Agent {
     bg_tasks: background::TaskTable,
     pub(crate) tokenizer: ArgTokenizer,
     system_prompt: String,
+    recall_store: VectorStore,
 }
 
 impl Agent {
@@ -81,6 +83,7 @@ impl Agent {
             bg_tasks: background::TaskTable::new(),
             tokenizer: ArgTokenizer::with_capacity(256),
             system_prompt,
+            recall_store: VectorStore::with_capacity(1024),
         }
     }
 
@@ -113,9 +116,16 @@ impl Agent {
             // Two-stage SIMD command routing (hash + verify)
             let (cmd_id, cmd_arg) = cmd_router::match_command_verified(msg.as_bytes());
 
-            // Handle /tasks meta command (ID 18, outside 0-5 range)
+            // Handle /tasks meta command
             if cmd_id == cmd_router::CMD_TASKS {
                 channel.send(&self.bg_tasks.format_list()).await;
+                continue;
+            }
+
+            // Handle /recall <query>
+            if cmd_id == cmd_router::CMD_RECALL {
+                let query = String::from_utf8_lossy(cmd_arg);
+                channel.send(&self.recall_store.recall_formatted(&query, 5)).await;
                 continue;
             }
 
@@ -154,41 +164,28 @@ impl Agent {
     /// Handle a meta command. Returns true to continue the loop, false to quit.
     async fn handle_meta(&mut self, cmd_id: i32, channel: &dyn Channel) -> Result<bool> {
         match cmd_id {
-            cmd_router::CMD_QUIT => {
-                channel.send("Goodbye!").await;
-                Ok(false)
-            }
-            cmd_router::CMD_HELP => {
-                channel.send(&self.help_text()).await;
-                Ok(true)
-            }
+            cmd_router::CMD_QUIT => { channel.send("Goodbye!").await; Ok(false) }
+            cmd_router::CMD_HELP => { channel.send(&self.help_text()).await; Ok(true) }
             cmd_router::CMD_TOOLS => {
-                let names = self.tools.list_names();
-                channel
-                    .send(&format!("Available tools: {}", names.join(", ")))
-                    .await;
+                channel.send(&format!("Available tools: {}", self.tools.list_names().join(", "))).await;
                 Ok(true)
             }
             cmd_router::CMD_CLEAR => {
                 self.messages.clear();
+                self.recall_store.clear();
                 channel.send("Context cleared.").await;
                 Ok(true)
             }
             cmd_router::CMD_MODEL => {
-                channel
-                    .send(&format!("Model: {}", self.config.model))
-                    .await;
+                channel.send(&format!("Model: {}", self.config.model)).await;
                 Ok(true)
             }
             cmd_router::CMD_PROFILE => {
-                match &self.last_timing {
-                    Some(timing) => channel.send(&timing.format()).await,
-                    None => {
-                        channel
-                            .send("No timing data yet. Send a message first.")
-                            .await
-                    }
-                }
+                let msg = match &self.last_timing {
+                    Some(t) => t.format(),
+                    None => "No timing data yet.".to_string(),
+                };
+                channel.send(&msg).await;
                 Ok(true)
             }
             _ => Ok(true),
@@ -333,11 +330,12 @@ impl Agent {
             return Ok(());
         }
 
-        // Add user message
+        // Add user message and index for recall
         self.messages.push(Message {
             role: Role::User,
             content: vec![ContentBlock::text(msg)],
         });
+        self.recall_store.insert(msg);
 
         // Agentic tool loop
         let mut turns = 0;
@@ -414,6 +412,13 @@ impl Agent {
             });
 
             if tool_uses.is_empty() || response.stop_reason != StopReason::ToolUse {
+                // Index assistant response for recall
+                if !text_parts.is_empty() {
+                    let full_text = text_parts.join("");
+                    if !full_text.trim().is_empty() {
+                        self.recall_store.insert(&full_text);
+                    }
+                }
                 if streamed_any_text {
                     channel.flush().await;
                 } else if !text_parts.is_empty() {
@@ -469,33 +474,21 @@ impl Agent {
         Ok(())
     }
 
-    fn help_text(&self) -> String {
-        format!(
-            "Commands:\n  \
-             /help              — Show this help\n  \
-             /quit              — Exit\n  \
-             /tools             — List available tools\n  \
-             /clear             — Clear conversation history\n  \
-             /model             — Show current model\n  \
-             /profile           — Show last turn timing\n  \
-             /tasks             — List background tasks\n\
-             \nDirect tool commands:\n  \
-             /time              — Current UTC time\n  \
-             /calc <expr>       — Evaluate math expression\n  \
-             /http <url>        — HTTP GET\n  \
-             /shell <command>   — Run shell command\n  \
-             /memory <action>   — Key-value store (list/read key/write key value)\n  \
-             /read <path>       — Read file contents\n  \
-             /write <path> <content> — Write to file\n  \
-             /ls [path]         — List directory\n  \
-             /json <action> <input> — JSON operations (keys/get/pretty)\n  \
-             /cpu               — System info (CPU, memory, uptime)\n  \
-             /tokens <text>     — Estimate token count\n  \
-             /bench <target>    — Microbenchmark (safety/router)\n\
-             \nAppend & to run any tool in background (e.g. /shell sleep 5 &)\n\
-             Pipe tools with | (e.g. /shell ls | /tokens)\n\
-             \nAgent: {} | Model: {}",
-            self.config.agent_name, self.config.model
-        )
+    pub(crate) fn help_text(&self) -> String {
+        format!("\
+Commands:
+  /help    /quit    /tools   /clear   /model   /profile
+  /tasks             — List background tasks
+  /recall <query>    — Search conversation history
+
+Tools:
+  /time  /calc <expr>  /http <url>  /shell <cmd>  /cpu
+  /memory <action> [key] [value]   /read <path>   /write <path> <content>
+  /ls [path]  /json <action> <input> [path]  /tokens <text>  /bench <target>
+
+Background: append & (e.g. /shell sleep 5 &)
+Pipelines: /shell ls | /tokens
+
+Agent: {} | Model: {}", self.config.agent_name, self.config.model)
     }
 }

@@ -3,7 +3,7 @@
 use eaclaw_core::tools::ToolRegistry;
 
 fn registry() -> ToolRegistry {
-    ToolRegistry::with_defaults()
+    ToolRegistry::with_defaults_open()
 }
 
 // --- /time ---
@@ -396,6 +396,7 @@ fn test_all_commands_route() {
         (b"/tokens hi", CMD_TOKENS),
         (b"/bench safety", CMD_BENCH),
         (b"/tasks", CMD_TASKS),
+        (b"/recall test", CMD_RECALL),
     ];
     for (input, expected) in commands {
         let (id, _) = match_command_verified(input);

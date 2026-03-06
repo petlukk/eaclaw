@@ -7,7 +7,7 @@
 // Meta commands: /help(0) /quit(1) /tools(2) /clear(3) /model(4) /profile(5)
 // Tool commands: /time(6) /calc(7) /http(8) /shell(9) /memory(10)
 //                /read(11) /write(12) /ls(13) /json(14) /cpu(15)
-//                /tokens(16) /bench(17)
+//                /tokens(16) /bench(17) /tasks(18) /recall(19)
 // Returns -1 for no match.
 
 const SLASH: i32 = 47
@@ -151,6 +151,12 @@ export func match_command(text: *u8, len: i32, out_match: *mut i32) {
                 // /task: t=116 a=97 s=115 k=107
                 if hash4 == 116 + 97 * 256 + 115 * 65536 + 107 * 16777216 {
                     out_match[0] = 18
+                    return
+                }
+
+                // /reca: r=114 e=101 c=99 a=97
+                if hash4 == 114 + 101 * 256 + 99 * 65536 + 97 * 16777216 {
+                    out_match[0] = 19
                     return
                 }
             }

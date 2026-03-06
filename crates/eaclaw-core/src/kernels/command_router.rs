@@ -9,6 +9,7 @@ pub const CMD_CLEAR: i32 = 3;
 pub const CMD_MODEL: i32 = 4;
 pub const CMD_PROFILE: i32 = 5;
 pub const CMD_TASKS: i32 = 18;
+pub const CMD_RECALL: i32 = 19;
 /// Tool commands:
 pub const CMD_TIME: i32 = 6;
 pub const CMD_CALC: i32 = 7;
@@ -50,6 +51,7 @@ const ALL_CMD_NAMES: &[(i32, &str)] = &[
     (CMD_TOKENS, "tokens"),
     (CMD_BENCH, "bench"),
     (CMD_TASKS, "tasks"),
+    (CMD_RECALL, "recall"),
 ];
 
 /// Match a slash command using the SIMD kernel.
@@ -127,6 +129,7 @@ pub fn command_name(id: i32) -> Option<&'static str> {
         CMD_TOKENS => Some("tokens"),
         CMD_BENCH => Some("bench"),
         CMD_TASKS => Some("tasks"),
+        CMD_RECALL => Some("recall"),
         _ => None,
     }
 }
