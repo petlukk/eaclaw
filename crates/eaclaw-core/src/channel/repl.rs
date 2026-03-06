@@ -12,6 +12,7 @@ pub struct ReplChannel {
     rx: Mutex<mpsc::Receiver<String>>,
     shutdown: Arc<AtomicBool>,
     response_prefix: String,
+    input_prompt: String,
 }
 
 impl ReplChannel {
@@ -63,10 +64,12 @@ impl ReplChannel {
             // rl is dropped here, restoring terminal state
         });
 
+        let input_prompt = "\x1b[1;32mYou>\x1b[0m ".to_string();
         Self {
             rx: Mutex::new(rx),
             shutdown,
             response_prefix,
+            input_prompt,
         }
     }
 
@@ -105,9 +108,10 @@ impl Channel for ReplChannel {
     }
 
     async fn send(&self, content: &str) {
-        // \r + clear-line to overwrite the You> prompt that rustyline already drew
-        print!("\r\x1b[2K");
-        println!("{} {content}\n", self.response_prefix);
+        // Clear the You> prompt that rustyline already drew, print response,
+        // then reprint the input prompt since rustyline is already blocking.
+        print!("\r\x1b[2K{} {content}\n\n{}", self.response_prefix, self.input_prompt);
+        let _ = std::io::stdout().flush();
     }
 
     async fn send_chunk(&self, chunk: &str) {
@@ -116,6 +120,7 @@ impl Channel for ReplChannel {
     }
 
     async fn flush(&self) {
-        println!("\n");
+        print!("\n\n{}", self.input_prompt);
+        let _ = std::io::stdout().flush();
     }
 }
