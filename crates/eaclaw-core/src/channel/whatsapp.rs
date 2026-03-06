@@ -65,9 +65,9 @@ impl WhatsAppChannel {
                             tracing::info!("WhatsApp bridge connected");
                         }
                         Some("qr") => {
-                            if let Some(data) = val.get("data").and_then(|d| d.as_str()) {
-                                eprintln!("\nWhatsApp QR code:\n{data}\n");
-                            }
+                            // QR code is rendered by the bridge to stderr.
+                            // Log that we received it for debugging.
+                            tracing::info!("QR code received — check terminal for scannable code");
                         }
                         Some("message") => {
                             if let Ok(msg) = serde_json::from_value::<InboundMessage>(val) {

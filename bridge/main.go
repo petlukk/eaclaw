@@ -30,6 +30,7 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	_ "github.com/mattn/go-sqlite3"
+	qrcode "github.com/skip2/go-qrcode"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -48,6 +49,47 @@ type OutboundMsg struct {
 	Type string `json:"type"`
 	JID  string `json:"jid"`
 	Text string `json:"text"`
+}
+
+// renderQR prints a scannable QR code to stderr using Unicode half-blocks.
+// Each character encodes two vertical pixels: ▀ ▄ █ and space.
+func renderQR(data string) {
+	qr, err := qrcode.New(data, qrcode.Medium)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bridge: QR encode error: %v\n", err)
+		return
+	}
+	qr.DisableBorder = false
+	bitmap := qr.Bitmap()
+	rows := len(bitmap)
+
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Scan this QR code with WhatsApp:")
+	fmt.Fprintln(os.Stderr, "")
+
+	// Process two rows at a time using half-block characters
+	for y := 0; y < rows; y += 2 {
+		for x := 0; x < len(bitmap[y]); x++ {
+			top := bitmap[y][x]
+			bot := false
+			if y+1 < rows {
+				bot = bitmap[y+1][x]
+			}
+			// true = black (dark module), false = white
+			switch {
+			case top && bot:
+				fmt.Fprint(os.Stderr, "█")
+			case top && !bot:
+				fmt.Fprint(os.Stderr, "▀")
+			case !top && bot:
+				fmt.Fprint(os.Stderr, "▄")
+			default:
+				fmt.Fprint(os.Stderr, " ")
+			}
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+	fmt.Fprintln(os.Stderr, "")
 }
 
 func main() {
@@ -125,10 +167,13 @@ func main() {
 
 		for evt := range qrChan {
 			if evt.Event == "code" {
+				// Emit raw data for the Rust agent
 				emit(map[string]string{
 					"type": "qr",
 					"data": evt.Code,
 				})
+				// Render scannable QR code to stderr
+				renderQR(evt.Code)
 			}
 		}
 	} else {
