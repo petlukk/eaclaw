@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "eaclaw-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eaclaw-core",
  "tokio",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "eaclaw-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aho-corasick",
  "async-trait",

@@ -27,7 +27,7 @@ On first run, scan the QR code with WhatsApp ("Link a device"). Then mention `@e
 [eaclaw] Listening for messages mentioning @eaclaw or !eaclaw
 
   ⚡ Triggered by Peter — calling LLM...
-  🔧 Tool: shell
+  ↳ Tool: shell (local)
   → [12036342...] eaclaw: I'm in /root/dev/eaclaw
 ```
 
@@ -40,7 +40,7 @@ Requires the [Eä compiler](https://github.com/petlukk/eacompute) and a Rust too
 ```bash
 ./build.sh      # Compile .ea kernels → .so + build WhatsApp bridge
 cargo build     # Build the binary (embeds kernels)
-cargo test      # Run tests (222 tests, no LD_LIBRARY_PATH needed)
+cargo test      # Run tests (230 tests, no LD_LIBRARY_PATH needed)
 cargo bench     # Run benchmarks
 ```
 
@@ -72,7 +72,7 @@ Tools can be invoked directly (bypassing the LLM) or used by the LLM during conv
 
 | Command | Description |
 |---------|-------------|
-| `/time` | Current UTC timestamp |
+| `/time` | Current UTC date and time |
 | `/calc <expr>` | Evaluate a math expression (supports `+`, `-`, `*`, `/`, `%`, parentheses) |
 | `/http <url>` | Fetch a URL |
 | `/shell <cmd>` | Run a shell command (streams output) |
@@ -84,6 +84,10 @@ Tools can be invoked directly (bypassing the LLM) or used by the LLM during conv
 | `/cpu` | System resource info (CPU, memory, uptime) |
 | `/tokens <text>` | Estimate token count for text |
 | `/bench <target>` | Benchmark a subsystem (`safety`, `router`) |
+| `/weather <city>` | Get current weather for a city |
+| `/translate <lang> <text>` | Translate text to another language |
+| `/define <word>` | Look up a word definition |
+| `/summarize <url>` | Fetch a URL and summarize its content |
 
 ### Background Execution
 
@@ -164,15 +168,15 @@ Subdomain matching is supported — allowing `example.com` also allows `api.exam
 
 ## Performance
 
-The hot path is designed to stay in L1 cache. Every SIMD kernel fits comfortably — the largest safety kernel is 2 KB of instructions, the command router is 1.2 KB.
+The hot path is designed to stay in L1 cache. Every SIMD kernel fits comfortably — the largest safety kernel is 2 KB of instructions, the command router is 1.3 KB.
 
 | Operation | Input Size | Time | Throughput |
 |-----------|-----------|------|------------|
 | Safety scan (injection + leak) | 1 KB | **930 ns** | 1.1 GB/s |
 | Safety scan (injection + leak) | 10 KB | 9 µs | 1.1 GB/s |
 | Safety scan (injection + leak) | 100 KB | 98 µs | 1.0 GB/s |
-| Full safety layer (SIMD + verify) | 1 KB | **2.1 µs** | 0.5 GB/s |
-| Full safety layer (SIMD + verify) | 100 KB | 179 µs | 0.6 GB/s |
+| Full safety layer (SIMD + verify) | 1 KB | **2.4 µs** | 0.4 GB/s |
+| Full safety layer (SIMD + verify) | 100 KB | 262 µs | 0.4 GB/s |
 | Command routing (SIMD hash + verify) | per command | **9 ns** | — |
 | Conversation recall (20 entries) | top-5 query | **1.7 µs** | — |
 
@@ -180,7 +184,7 @@ All kernels use `u8x16` SIMD (SSE2), keeping instruction footprint small:
 
 | Kernel | `.text` size | Fits in |
 |--------|-------------|---------|
-| `command_router` | 1.2 KB | L1 icache |
+| `command_router` | 1.3 KB | L1 icache |
 | `leak_scanner` | 1.4 KB | L1 icache |
 | `sanitizer` | 1.6 KB | L1 icache |
 | `fused_safety` | 2.0 KB | L1 icache |

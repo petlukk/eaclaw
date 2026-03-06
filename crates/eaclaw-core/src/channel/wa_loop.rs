@@ -3,12 +3,14 @@
 //! Receives messages from WhatsAppChannel, routes through Gateway,
 //! calls LLM for forwarded messages, and sends responses back.
 
-use crate::agent::ainur;
+use crate::agent::tool_dispatch::build_tool_params;
 use crate::channel::gateway::{Action, Gateway};
 use crate::channel::types::GroupChannel;
 use crate::channel::whatsapp::WhatsAppChannel;
 use crate::config::Config;
 use crate::error::Result;
+use crate::kernels::arg_tokenizer::ArgTokenizer;
+use crate::kernels::command_router as cmd_router;
 use crate::llm::{ContentBlock, LlmProvider, Message, Role, StopReason, ToolDef};
 use crate::safety::SafetyLayer;
 use crate::tools::ToolRegistry;
@@ -36,6 +38,7 @@ pub async fn run(
     let channel = WhatsAppChannel::start(bridge_path, session_dir).await?;
     let mut gateway = Gateway::new(config);
     let mut safety = SafetyLayer::new();
+    let mut tokenizer = ArgTokenizer::with_capacity(256);
     let tool_defs: Vec<ToolDef> = tools.tool_defs();
 
     let system_prompt = match &config.identity {
@@ -87,83 +90,48 @@ pub async fn run(
                 // Strip trigger prefix to get the actual command/message
                 let stripped = strip_trigger(&text, &config.agent_name);
 
-                // Check for /ainur command
-                if let Some((count, task)) = ainur::parse_ainur(stripped) {
-                    eprintln!(
-                        "  ⚡ Triggered by {sender_name} — /ainur {count}..."
-                    );
-
-                    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
-                    let llm2 = llm.clone();
-                    let tools2 = tools.clone();
-                    let td2 = tool_defs.clone();
-                    let sys2 = system_prompt.clone();
-                    let mt = config.max_turns;
-                    let task_str = task.to_string();
-
-                    let ainur_handle = tokio::spawn(async move {
-                        let mut s = SafetyLayer::new();
-                        ainur::execute(
-                            count, &task_str, &llm2, &tools2, &mut s,
-                            &td2, &sys2, mt, event_tx,
-                        ).await
-                    });
-
-                    // Drain events — send to both terminal and WhatsApp
-                    let jid = processed.jid.clone();
-                    while let Some(event) = event_rx.recv().await {
-                        let chat_msg = match &event {
-                            ainur::AinurEvent::Planning => {
-                                eprintln!("  /ainur {count} — decomposing task...");
-                                Some(format!("🎵 /ainur {count} — decomposing task..."))
-                            }
-                            ainur::AinurEvent::Planned { subtasks } => {
-                                let lines: Vec<String> = subtasks.iter().enumerate()
-                                    .map(|(i, s)| format!("♪ Ainur {}/{count}: {s}", i + 1))
-                                    .collect();
-                                let msg = lines.join("\n");
-                                eprintln!("{}", lines.iter().map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n"));
-                                Some(msg)
-                            }
-                            ainur::AinurEvent::WorkerProgress { index, total, status } => {
-                                eprintln!("  ♪ Ainur {}/{total} {status}", index + 1);
-                                Some(format!("♪ Ainur {}/{total} {status}", index + 1))
-                            }
-                            ainur::AinurEvent::WorkerDone { index, total } => {
-                                eprintln!("  ♪ Ainur {}/{total} ✓", index + 1);
-                                Some(format!("♪ Ainur {}/{total} ✓", index + 1))
-                            }
-                            ainur::AinurEvent::Merging => {
-                                eprintln!("  ♪ All voices complete — merging...");
-                                Some("🎵 All voices complete — merging...".into())
-                            }
-                            ainur::AinurEvent::RateLimitWait { seconds } => {
-                                eprintln!("  ⏳ Rate limit — waiting {seconds}s...");
-                                Some(format!("⏳ Rate limit — waiting {seconds}s..."))
-                            }
-                        };
-                        if let Some(msg) = chat_msg {
-                            channel.send(&jid, &msg).await;
-                        }
+                // Try direct slash command (no LLM needed)
+                if stripped.starts_with('/') {
+                    let (cmd_id, cmd_arg) =
+                        cmd_router::match_command_verified(stripped.as_bytes());
+                    if cmd_id >= cmd_router::CMD_TOOL_FIRST
+                        && cmd_id <= cmd_router::CMD_TOOL_LAST
+                    {
+                        let arg_str =
+                            String::from_utf8_lossy(cmd_arg).into_owned();
+                        let tool_name =
+                            cmd_router::command_name(cmd_id).unwrap_or("unknown");
+                        eprintln!(
+                            "  ⚡ Triggered by {sender_name} — /{tool_name} (direct)"
+                        );
+                        let response_text =
+                            match build_tool_params(cmd_id, &arg_str, &mut tokenizer)
+                            {
+                                Ok((name, params)) => match tools.get(name) {
+                                    Some(tool) => match tool.execute(params).await {
+                                        Ok(output) => {
+                                            let scan = safety.scan_output(&output);
+                                            if scan.leaks_found {
+                                                "Output blocked: contains potential secrets.".into()
+                                            } else {
+                                                output
+                                            }
+                                        }
+                                        Err(e) => format!("Tool error: {e}"),
+                                    },
+                                    None => format!("Unknown tool: {name}"),
+                                },
+                                Err(e) => format!("{e}"),
+                            };
+                        channel.send(&processed.jid, &response_text).await;
+                        gateway.record_response(&processed.jid, &response_text);
+                        eprintln!(
+                            "  → [{jid}] eaclaw: {text}",
+                            jid = short_jid(&processed.jid),
+                            text = truncate(&response_text, 120),
+                        );
+                        continue;
                     }
-
-                    let response_text = match ainur_handle.await {
-                        Ok(Ok(text)) => text,
-                        Ok(Err(e)) => {
-                            eprintln!("  ✗ Ainur error: {e}");
-                            format!("Ainur error: {e}")
-                        }
-                        Err(e) => format!("Ainur task error: {e}"),
-                    };
-
-                    channel.send(&processed.jid, &response_text).await;
-                    gateway.record_response(&processed.jid, &response_text);
-                    eprintln!(
-                        "  → [{jid}] eaclaw: {resp}",
-                        jid = short_jid(&processed.jid),
-                        resp = truncate(&response_text, 120),
-                    );
-                    continue;
                 }
 
                 eprintln!(
@@ -255,13 +223,17 @@ fn short_jid(jid: &str) -> &str {
     jid.split('@').next().unwrap_or(jid)
 }
 
-/// Truncate text for terminal display.
+/// Truncate text for terminal display (char-boundary safe).
 fn truncate(s: &str, max: usize) -> String {
     let s = s.replace('\n', " ");
     if s.len() <= max {
         s
     } else {
-        format!("{}...", &s[..max])
+        let mut end = max;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &s[..end])
     }
 }
 
@@ -310,6 +282,8 @@ async fn run_llm_turn(
             content: assistant_blocks,
         });
 
+        // Only return text when we're done with tools — intermediate text
+        // (e.g. "Let me check that") is thinking, not the real answer.
         if tool_uses.is_empty() || response.stop_reason != StopReason::ToolUse {
             return Ok(text_parts.join(""));
         }
@@ -317,7 +291,7 @@ async fn run_llm_turn(
         // Execute tools
         let mut result_blocks = Vec::new();
         for (id, name, input) in &tool_uses {
-            eprintln!("  🔧 Tool: {name}");
+            eprintln!("  ↳ Tool: {name} (local)");
             let result = match tools.get(name) {
                 Some(tool) => match tool.execute(input.clone()).await {
                     Ok(output) => {

@@ -23,12 +23,16 @@ pub const CMD_JSON: i32 = 14;
 pub const CMD_CPU: i32 = 15;
 pub const CMD_TOKENS: i32 = 16;
 pub const CMD_BENCH: i32 = 17;
+pub const CMD_WEATHER: i32 = 20;
+pub const CMD_TRANSLATE: i32 = 21;
+pub const CMD_DEFINE: i32 = 22;
+pub const CMD_SUMMARIZE: i32 = 23;
 /// No match:
 pub const CMD_NONE: i32 = -1;
 
 /// First and last tool command IDs.
 pub const CMD_TOOL_FIRST: i32 = CMD_TIME;
-pub const CMD_TOOL_LAST: i32 = CMD_BENCH;
+pub const CMD_TOOL_LAST: i32 = CMD_SUMMARIZE;
 
 /// Full command names for two-stage verification.
 const ALL_CMD_NAMES: &[(i32, &str)] = &[
@@ -52,6 +56,10 @@ const ALL_CMD_NAMES: &[(i32, &str)] = &[
     (CMD_BENCH, "bench"),
     (CMD_TASKS, "tasks"),
     (CMD_RECALL, "recall"),
+    (CMD_WEATHER, "weather"),
+    (CMD_TRANSLATE, "translate"),
+    (CMD_DEFINE, "define"),
+    (CMD_SUMMARIZE, "summarize"),
 ];
 
 /// Match a slash command using the SIMD kernel.
@@ -130,6 +138,10 @@ pub fn command_name(id: i32) -> Option<&'static str> {
         CMD_BENCH => Some("bench"),
         CMD_TASKS => Some("tasks"),
         CMD_RECALL => Some("recall"),
+        CMD_WEATHER => Some("weather"),
+        CMD_TRANSLATE => Some("translate"),
+        CMD_DEFINE => Some("define"),
+        CMD_SUMMARIZE => Some("summarize"),
         _ => None,
     }
 }
@@ -367,5 +379,53 @@ mod tests {
         let (id, arg) = match_command_verified(b"/calc ");
         assert_eq!(id, CMD_CALC);
         assert!(arg.is_empty());
+    }
+
+    #[test]
+    fn test_weather() {
+        assert_eq!(match_command(b"/weather"), CMD_WEATHER);
+    }
+
+    #[test]
+    fn test_verified_weather_with_arg() {
+        let (id, arg) = match_command_verified(b"/weather London");
+        assert_eq!(id, CMD_WEATHER);
+        assert_eq!(arg, b"London");
+    }
+
+    #[test]
+    fn test_translate() {
+        assert_eq!(match_command(b"/translate"), CMD_TRANSLATE);
+    }
+
+    #[test]
+    fn test_verified_translate_with_arg() {
+        let (id, arg) = match_command_verified(b"/translate Spanish hello");
+        assert_eq!(id, CMD_TRANSLATE);
+        assert_eq!(arg, b"Spanish hello");
+    }
+
+    #[test]
+    fn test_define() {
+        assert_eq!(match_command(b"/define"), CMD_DEFINE);
+    }
+
+    #[test]
+    fn test_verified_define_with_arg() {
+        let (id, arg) = match_command_verified(b"/define hello");
+        assert_eq!(id, CMD_DEFINE);
+        assert_eq!(arg, b"hello");
+    }
+
+    #[test]
+    fn test_summarize() {
+        assert_eq!(match_command(b"/summarize"), CMD_SUMMARIZE);
+    }
+
+    #[test]
+    fn test_verified_summarize_with_arg() {
+        let (id, arg) = match_command_verified(b"/summarize https://example.com");
+        assert_eq!(id, CMD_SUMMARIZE);
+        assert_eq!(arg, b"https://example.com");
     }
 }

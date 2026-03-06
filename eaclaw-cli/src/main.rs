@@ -44,7 +44,7 @@ async fn run_repl(config: &Config) {
     let llm: Arc<dyn eaclaw_core::llm::LlmProvider> =
         Arc::new(AnthropicProvider::new(config));
 
-    let tools = ToolRegistry::with_defaults(config);
+    let tools = ToolRegistry::with_defaults(config, llm.clone());
     let safety = SafetyLayer::new();
     let channel = ReplChannel::new(&config.agent_name);
 
@@ -67,7 +67,7 @@ async fn run_whatsapp(config: &Config) {
     let llm: Arc<dyn eaclaw_core::llm::LlmProvider> =
         Arc::new(AnthropicProvider::new(config));
 
-    let tools = ToolRegistry::with_defaults(config);
+    let tools = ToolRegistry::with_defaults(config, llm.clone());
 
     // Bridge path: check env, then look next to the binary, then PATH
     let bridge_path = std::env::var("EACLAW_BRIDGE_PATH").unwrap_or_else(|_| {

@@ -1,7 +1,6 @@
-pub mod ainur;
 pub mod background;
 pub mod router;
-mod tool_dispatch;
+pub mod tool_dispatch;
 
 use crate::channel::Channel;
 use crate::config::Config;
@@ -104,68 +103,6 @@ impl Agent {
                 Some(m) => m,
                 None => break,
             };
-
-            // /ainur N <task> — parallel multi-agent orchestration
-            if let Some((count, task)) = ainur::parse_ainur(&msg) {
-                let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
-
-                // Spawn the ainur pipeline
-                let llm = self.llm.clone();
-                let tools = self.tools.clone();
-                let tool_defs_clone = tool_defs.clone();
-                let system = self.system_prompt.clone();
-                let max_turns = self.config.max_turns;
-                let task = task.to_string();
-
-                let ainur_handle = tokio::spawn(async move {
-                    // Safety is not Send, so create a new one for the task
-                    let mut safety = crate::safety::SafetyLayer::new();
-                    ainur::execute(
-                        count, &task, &llm, &tools, &mut safety,
-                        &tool_defs_clone, &system, max_turns, event_tx,
-                    ).await
-                });
-
-                // Print events to terminal as they arrive
-                while let Some(event) = event_rx.recv().await {
-                    match &event {
-                        ainur::AinurEvent::Planning => {
-                            eprintln!("  /ainur {count} — decomposing task...");
-                        }
-                        ainur::AinurEvent::Planned { subtasks } => {
-                            for (i, sub) in subtasks.iter().enumerate() {
-                                eprintln!("  ♪ Ainur {}/{count}: {sub}", i + 1);
-                            }
-                        }
-                        ainur::AinurEvent::WorkerProgress { index, total, status } => {
-                            eprintln!("  ♪ Ainur {}/{total} {status}", index + 1);
-                        }
-                        ainur::AinurEvent::WorkerDone { index, total } => {
-                            eprintln!("  ♪ Ainur {}/{total} done", index + 1);
-                        }
-                        ainur::AinurEvent::Merging => {
-                            eprintln!("  ♪ All voices complete — merging...");
-                        }
-                        ainur::AinurEvent::RateLimitWait { seconds } => {
-                            eprintln!("  ⏳ Rate limit — waiting {seconds}s...");
-                        }
-                    }
-                }
-
-                match ainur_handle.await {
-                    Ok(Ok(response)) => {
-                        self.recall_store.insert(&response);
-                        channel.send(&response).await;
-                    }
-                    Ok(Err(e)) => {
-                        channel.send(&format!("Ainur error: {e}")).await;
-                    }
-                    Err(e) => {
-                        channel.send(&format!("Ainur task error: {e}")).await;
-                    }
-                }
-                continue;
-            }
 
             // Pipeline detection: split on " | /" before routing
             if msg.starts_with(&self.config.command_prefix) && msg.contains(" | /") {
@@ -548,8 +485,8 @@ Tools:
   /time  /calc <expr>  /http <url>  /shell <cmd>  /cpu
   /memory <action> [key] [value]   /read <path>   /write <path> <content>
   /ls [path]  /json <action> <input> [path]  /tokens <text>  /bench <target>
+  /weather <city>  /translate <lang> <text>  /define <word>  /summarize <url>
 
-Parallel: /ainur <N> <task>  — N parallel workers (1-10)
 Background: append & (e.g. /shell sleep 5 &)
 Pipelines: /shell ls | /tokens
 

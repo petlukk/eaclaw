@@ -4,7 +4,7 @@
 
 eaclaw is an AI agent framework that combines SIMD-accelerated security scanning with streaming LLM integration. Every user message passes through cache-resident Eä kernels for injection detection and secret leak prevention before reaching the LLM. The entire security pipeline runs in single-digit microseconds — six orders of magnitude faster than the LLM call it protects.
 
-**10,048 lines** of Rust + Eä + Go across 58 source files. **222 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime. WhatsApp integration via Go bridge.
+**10,324 lines** of Rust + Eä + Go across 62 source files. **230 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime. WhatsApp integration via Go bridge.
 
 ---
 
@@ -17,7 +17,7 @@ eaclaw is an AI agent framework that combines SIMD-accelerated security scanning
   User input ──────────►│  ┌─────────────┐   ┌──────────────┐             │
                         │  │ SIMD command │   │  Fused SIMD  │             │
                         │  │   router     │──►│ safety scan  │             │
-                        │  │  (1,243 B)   │   │  (2,024 B)   │             │
+                        │  │  (1,338 B)   │   │  (2,024 B)   │             │
                         │  └─────────────┘   └──────┬───────┘             │
                         │        │                   │                     │
                         │   /help /quit          injection?                │
@@ -31,7 +31,7 @@ eaclaw is an AI agent framework that combines SIMD-accelerated security scanning
                         │    [respond]             │                      │
                         │                    ┌─────▼──────────┐          │
                         │                    │  Tool executor  │          │
-                        │                    │  13 built-in    │          │
+                        │                    │  16 built-in│          │
                         │                    │  tools          │          │
                         │                    └─────┬──────────┘          │
                         │                          │                      │
@@ -90,7 +90,7 @@ All 7 Eä kernel `.so` files (~126 KB total) are embedded in the binary via `inc
 eaclaw/
 ├── kernels/                          # Eä SIMD source files
 │   ├── byte_classifier.ea            #   Byte flag classification (2,478 B .text)
-│   ├── command_router.ea             #   Hash-based slash command matching (1,243 B)
+│   ├── command_router.ea             #   Hash-based slash command matching (1,338 B)
 │   ├── sanitizer.ea                  #   Injection pattern prefix filter (1,622 B)
 │   ├── leak_scanner.ea               #   Secret leak prefix filter (1,395 B)
 │   ├── fused_safety.ea               #   Combined inject+leak single pass (2,024 B)
@@ -136,11 +136,15 @@ eaclaw/
 │       │   ├── cpu.rs                #   System resource info
 │       │   ├── tokens.rs             #   Token count estimator
 │       │   ├── bench_tool.rs         #   Subsystem benchmarking
+│       │   ├── weather.rs            #   Weather via wttr.in
+│       │   ├── define.rs             #   Word definition via dictionaryapi.dev
+│       │   ├── translate.rs          #   Translation via LLM
+│       │   ├── summarize.rs          #   URL summarization via LLM
 │       │   └── echo.rs               #   Echo (test tool)
 │       └── kernels/
 │           ├── mod.rs                #   Module exports + init()
 │           ├── ffi.rs                #   Runtime kernel loading (libloading + embed)
-│           ├── command_router.rs     #   Safe wrapper + CMD_* constants (20 commands)
+│           ├── command_router.rs     #   Safe wrapper + CMD_* constants (24 commands)
 │           ├── sanitizer_kernel.rs   #   Injection prefix scan wrapper
 │           ├── leak_scanner.rs       #   Leak prefix scan wrapper
 │           ├── fused_safety.rs       #   Fused scan wrapper (reusable buffers)
@@ -179,13 +183,14 @@ eaclaw/
 
 Seven kernels compiled to shared libraries by the Eä v1.6.0 compiler. All use `u8x16` SIMD vectors (not `u8x32`, which has movemask sign-bit issues). Compiled and tested on x86_64.
 
-### command_router (1,243 bytes)
+### command_router (1,338 bytes)
 
-Hash-based slash command matching. Reads 4 bytes after `/`, computes `b1 + b2*256 + b3*65536 + b4*16777216`, compares against 20 known hashes. Two-stage verification in Rust prevents hash collisions. Measured at **9 ns/call** (release build, 13-command benchmark).
+Hash-based slash command matching. Reads 4 bytes after `/`, computes `b1 + b2*256 + b3*65536 + b4*16777216`, compares against 24 known hashes. Two-stage verification in Rust prevents hash collisions. Measured at **9 ns/call** (release build, 13-command benchmark).
 
 ```
 Meta:  /help /quit /tools /clear /model /profile /tasks /recall
 Tools: /time /calc /http /shell /memory /read /write /ls /json /cpu /tokens /bench
+       /weather /translate /define /summarize
 ```
 
 ### fused_safety (2,024 bytes)
@@ -342,7 +347,7 @@ loop {
 
 | Tool | Command | Description |
 |------|---------|-------------|
-| **time** | `/time` | Current UTC timestamp (RFC 3339) |
+| **time** | `/time` | Current UTC date and time (formatted) |
 | **calc** | `/calc <expr>` | Math evaluator (i128 integers + f64 floats) |
 | **shell** | `/shell <cmd>` | Shell execution with streaming output |
 | **http** | `/http <url>` | HTTP GET with endpoint allowlisting |
@@ -354,6 +359,10 @@ loop {
 | **cpu** | `/cpu` | System resource info (CPU, memory, uptime) |
 | **tokens** | `/tokens <text>` | Token count estimator |
 | **bench** | `/bench <target>` | Benchmark subsystem (safety, router) |
+| **weather** | `/weather <city>` | Current weather (via wttr.in) |
+| **translate** | `/translate <lang> <text>` | Translate text (via LLM) |
+| **define** | `/define <word>` | Word definition (via dictionaryapi.dev) |
+| **summarize** | `/summarize <url>` | Fetch and summarize URL (via LLM) |
 | **echo** | *(LLM only)* | Returns input unchanged (test tool) |
 
 Background execution: append `&` (e.g., `/shell sleep 5 &`). Pipelines: `/shell ls | /tokens`.
@@ -373,7 +382,7 @@ Background execution: append `&` (e.g., `/shell sleep 5 &`). Pipelines: `/shell 
 | `/tasks` | CMD_TASKS (18) | List background tasks |
 | `/recall` | CMD_RECALL (19) | Search conversation history (SIMD) |
 
-All 20 commands (8 meta + 12 tools) matched by the SIMD command router with two-stage verification (hash + full name check). Measured at **9 ns/call**.
+All 24 commands (8 meta + 16 tools) matched by the SIMD command router with two-stage verification (hash + full name check). Measured at **9 ns/call**.
 
 ---
 
@@ -410,7 +419,7 @@ All 20 commands (8 meta + 12 tools) matched by the SIMD command router with two-
 
 | Kernel | .text size | L1i budget (of 64KB) |
 |--------|----------:|--------------------|
-| command_router | 1,243 B | 1.9% |
+| command_router | 1,338 B | 2.1% |
 | leak_scanner | 1,395 B | 2.2% |
 | sanitizer | 1,622 B | 2.5% |
 | fused_safety | 2,024 B | 3.2% |
@@ -418,7 +427,7 @@ All 20 commands (8 meta + 12 tools) matched by the SIMD command router with two-
 | json_scanner | 2,890 B | 4.5% |
 | search | 23,196 B | 36.2% |
 | **Hot path (Rust scan_input + fused kernel)** | **5,410 B** | **8.5%** |
-| **All kernels** | **34,848 B** | **54.5%** |
+| **All kernels** | **34,943 B** | **54.6%** |
 
 The hot path uses 8.5% of L1 instruction cache. All kernels combined fit in just over half.
 
@@ -426,12 +435,12 @@ The hot path uses 8.5% of L1 instruction cache. All kernels combined fit in just
 
 | Operation | Input | Latency | Throughput |
 |-----------|-------|---------|------------|
-| Fused SIMD kernel | 1 KB | **991 ns** | 1.0 GB/s |
-| Fused SIMD kernel | 10 KB | 10.7 µs | 0.9 GB/s |
-| Fused SIMD kernel | 100 KB | 106 µs | 0.9 GB/s |
-| Full safety layer (SIMD + verify) | 1 KB | **2.2 µs** | 0.5 GB/s |
-| Full safety layer (SIMD + verify) | 10 KB | 18.3 µs | 0.5 GB/s |
-| Full safety layer (SIMD + verify) | 100 KB | 196 µs | 0.5 GB/s |
+| Fused SIMD kernel | 1 KB | **930 ns** | 1.1 GB/s |
+| Fused SIMD kernel | 10 KB | 9 µs | 1.1 GB/s |
+| Fused SIMD kernel | 100 KB | 98 µs | 1.0 GB/s |
+| Full safety layer (SIMD + verify) | 1 KB | **2.0 µs** | 0.5 GB/s |
+| Full safety layer (SIMD + verify) | 10 KB | 17 µs | 0.6 GB/s |
+| Full safety layer (SIMD + verify) | 100 KB | 222 µs | 0.4 GB/s |
 
 ### Cache Behavior (perf stat)
 
@@ -440,33 +449,33 @@ The hot path uses 8.5% of L1 instruction cache. All kernels combined fit in just
 | Counter | Value | Assessment |
 |---------|-------|------------|
 | Instructions | 17.4 B | |
-| IPC | **3.95** | Near 4-wide superscalar ceiling |
-| L1-icache misses | 95,119 | 0.00055% — negligible |
-| L1-dcache misses | 1.55M | Expected (output arrays) |
+| IPC | **3.71** | Near 4-wide superscalar ceiling |
+| L1-icache misses | 111,585 | 0.00064% — negligible |
+| L1-dcache misses | 2.36M | Expected (output arrays) |
 | Branch mispredictions | **0** | Perfect prediction |
-| Per call | **741 ns** | |
+| Per call | **721 ns** | |
 
 **1KB input, 2M iterations:**
 
 | Counter | Value | Assessment |
 |---------|-------|------------|
 | Instructions | 46.4 B | |
-| IPC | **3.84** | Near ceiling |
-| L1-icache misses | 287,915 | 0.00062% — negligible |
+| IPC | **3.67** | Near ceiling |
+| L1-icache misses | 342,955 | 0.00074% — negligible |
 | Branch mispredictions | **0** | Perfect prediction |
-| Per call | **2,072 ns** | |
-| Cycles/byte | **5.9** | Below 6 cycles/byte target |
+| Per call | **1,997 ns** | |
+| Cycles/byte | **6.2** | ~6 cycles/byte (VM-dependent) |
 
 **10KB input, 200K iterations:**
 
 | Counter | Value | Assessment |
 |---------|-------|------------|
 | Instructions | 37.8 B | |
-| IPC | **3.52** | Good (memory-bound at this size) |
-| L1-icache misses | 264,596 | 0.00070% — negligible |
+| IPC | **3.39** | Good (memory-bound at this size) |
+| L1-icache misses | 317,539 | 0.00084% — negligible |
 | Branch mispredictions | **0** | Perfect prediction |
 | Per call | **18 µs** | |
-| Cycles/byte | **5.3** | Below target |
+| Cycles/byte | **5.4** | Below target |
 
 Zero branch mispredictions and <0.001% L1-icache miss rate across all sizes confirms the kernels run entirely from L1 instruction cache after warmup.
 
@@ -498,27 +507,27 @@ Safety scanning adds **2–3 microseconds** per turn. Six orders of magnitude fa
 
 | Component | Files | Lines |
 |-----------|------:|------:|
-| Rust — eaclaw-core (src) | 45 | 6,901 |
+| Rust — eaclaw-core (src) | 49 | 7,382 |
 | Rust — eaclaw-cli | 1 | 98 |
 | Rust — integration tests | 3 | 1,007 |
-| Eä kernels | 7 | 1,301 |
+| Eä kernels | 7 | 1,325 |
 | Go — WhatsApp bridge | 1 | 229 |
 | Benchmarks | 1 | 283 |
-| **Total** | **58** | **10,048** |
+| **Total** | **62** | **10,324** |
 
 ---
 
 ## Test Results
 
-222 tests across unit tests, integration tests, and edge case tests:
+230 tests across unit tests, integration tests, and edge case tests:
 
 ```
-test result: ok. 149 passed  (unit tests — eaclaw-core lib)
+test result: ok. 157 passed  (unit tests — eaclaw-core lib)
 test result: ok. 32 passed   (edge cases — safety, allowlist, identity, calc)
 test result: ok. 10 passed   (recall — conversation, unicode, large store)
-test result: ok. 31 passed   (tool integration — all 13 tools + router)
+test result: ok. 31 passed   (tool integration — all 16 tools + router)
 ─────────────────────────────
-         222 passed, 0 failed
+         230 passed, 0 failed
 ```
 
 ---
@@ -528,7 +537,7 @@ test result: ok. 31 passed   (tool integration — all 13 tools + router)
 ```bash
 ./build.sh                          # Compile .ea → .so + build WhatsApp bridge
 cargo build --release               # Build single binary (LTO, embeds kernels)
-cargo test                          # Run all 222 tests (no LD_LIBRARY_PATH needed)
+cargo test                          # Run all 230 tests (no LD_LIBRARY_PATH needed)
 cargo bench                         # Criterion benchmarks
 cargo run --release                 # Start REPL (requires ANTHROPIC_API_KEY)
 cargo run --release -- --whatsapp   # Start WhatsApp mode

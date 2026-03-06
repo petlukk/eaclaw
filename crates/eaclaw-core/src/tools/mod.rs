@@ -1,19 +1,23 @@
 pub mod bench_tool;
 pub mod calc;
 pub mod cpu;
+pub mod define;
 pub mod http;
 pub mod json_tool;
 pub mod ls;
 pub mod memory;
 pub mod read_file;
 pub mod shell;
+pub mod summarize;
 pub mod time;
 pub mod tokens;
+pub mod translate;
+pub mod weather;
 pub mod write_file;
 
 use crate::config::Config;
 use crate::error::Result;
-use crate::llm::ToolDef;
+use crate::llm::{LlmProvider, ToolDef};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -65,6 +69,7 @@ impl ToolRegistry {
     }
 
     /// Create a registry with all default tools (no host restrictions).
+    /// LLM is optional — translate/summarize are only registered when provided.
     pub fn with_defaults_open() -> Self {
         let mut reg = Self::new();
         reg.register(Arc::new(time::TimeTool));
@@ -79,11 +84,13 @@ impl ToolRegistry {
         reg.register(Arc::new(cpu::CpuTool));
         reg.register(Arc::new(tokens::TokensTool));
         reg.register(Arc::new(bench_tool::BenchTool));
+        reg.register(Arc::new(weather::WeatherTool));
+        reg.register(Arc::new(define::DefineTool));
         reg
     }
 
     /// Create a registry with all default tools using config.
-    pub fn with_defaults(config: &Config) -> Self {
+    pub fn with_defaults(config: &Config, llm: Arc<dyn LlmProvider>) -> Self {
         let mut reg = Self::new();
         reg.register(Arc::new(time::TimeTool));
         reg.register(Arc::new(calc::CalcTool));
@@ -97,6 +104,10 @@ impl ToolRegistry {
         reg.register(Arc::new(cpu::CpuTool));
         reg.register(Arc::new(tokens::TokensTool));
         reg.register(Arc::new(bench_tool::BenchTool));
+        reg.register(Arc::new(weather::WeatherTool));
+        reg.register(Arc::new(define::DefineTool));
+        reg.register(Arc::new(translate::TranslateTool::new(llm.clone())));
+        reg.register(Arc::new(summarize::SummarizeTool::new(llm)));
         reg
     }
 

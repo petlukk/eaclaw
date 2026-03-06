@@ -20,7 +20,7 @@ Run all tests before and after changes. Nothing ships with failures.
 cargo test
 ```
 
-Expected: 222 tests pass.
+Expected: 230 tests pass.
 
 ---
 
@@ -81,7 +81,7 @@ cycles_per_byte = total_cycles / (iterations * input_size)
 ```
 
 **Targets:**
-- < 6 cycles/byte at 1KB+ (SIMD throughput floor)
+- ~6 cycles/byte at 1KB+ (SIMD throughput floor, VM-dependent)
 - 200B will show higher due to fixed per-call overhead (~1,500-2,000 cycles)
 
 ---

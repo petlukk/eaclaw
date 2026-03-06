@@ -159,6 +159,30 @@ export func match_command(text: *u8, len: i32, out_match: *mut i32) {
                     out_match[0] = 19
                     return
                 }
+
+                // /weat: w=119 e=101 a=97 t=116
+                if hash4 == 119 + 101 * 256 + 97 * 65536 + 116 * 16777216 {
+                    out_match[0] = 20
+                    return
+                }
+
+                // /tran: t=116 r=114 a=97 n=110
+                if hash4 == 116 + 114 * 256 + 97 * 65536 + 110 * 16777216 {
+                    out_match[0] = 21
+                    return
+                }
+
+                // /defi: d=100 e=101 f=102 i=105
+                if hash4 == 100 + 101 * 256 + 102 * 65536 + 105 * 16777216 {
+                    out_match[0] = 22
+                    return
+                }
+
+                // /summ: s=115 u=117 m=109 m=109
+                if hash4 == 115 + 117 * 256 + 109 * 65536 + 109 * 16777216 {
+                    out_match[0] = 23
+                    return
+                }
             }
         }
     }

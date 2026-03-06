@@ -1,9 +1,146 @@
 use crate::channel::Channel;
 use crate::error::Result;
+use crate::kernels::arg_tokenizer::ArgTokenizer;
 use crate::kernels::command_router as cmd_router;
 use std::time::Instant;
 
 use super::{Agent, TurnTiming};
+
+/// Build tool name and params from command ID and argument string.
+/// Shared between REPL (Agent) and WhatsApp direct commands.
+pub fn build_tool_params(
+    cmd_id: i32,
+    arg: &str,
+    tokenizer: &mut ArgTokenizer,
+) -> Result<(&'static str, serde_json::Value)> {
+    match cmd_id {
+        cmd_router::CMD_TIME => Ok(("time", serde_json::json!({}))),
+        cmd_router::CMD_CALC => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool("usage: /calc <expression>".into()));
+            }
+            Ok(("calc", serde_json::json!({"expr": arg})))
+        }
+        cmd_router::CMD_HTTP => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool("usage: /http <url>".into()));
+            }
+            Ok(("http", serde_json::json!({"url": arg})))
+        }
+        cmd_router::CMD_SHELL => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool("usage: /shell <command>".into()));
+            }
+            Ok(("shell", serde_json::json!({"command": arg})))
+        }
+        cmd_router::CMD_MEMORY => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /memory <action> [key] [value]".into(),
+                ));
+            }
+            let parts = tokenizer.tokenize_str(arg, 3);
+            let action = parts.first().unwrap_or(&"");
+            let key = parts.get(1).unwrap_or(&"");
+            let value = parts.get(2).unwrap_or(&"");
+            Ok((
+                "memory",
+                serde_json::json!({"action": action, "key": key, "value": value}),
+            ))
+        }
+        cmd_router::CMD_READ => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool("usage: /read <path>".into()));
+            }
+            Ok(("read", serde_json::json!({"path": arg})))
+        }
+        cmd_router::CMD_WRITE => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /write <path> <content>".into(),
+                ));
+            }
+            let parts = tokenizer.tokenize_str(arg, 2);
+            let path = parts.first().unwrap_or(&"");
+            let content = parts.get(1).unwrap_or(&"");
+            Ok((
+                "write",
+                serde_json::json!({"path": path, "content": content}),
+            ))
+        }
+        cmd_router::CMD_LS => {
+            let path = if arg.is_empty() { "." } else { arg };
+            Ok(("ls", serde_json::json!({"path": path})))
+        }
+        cmd_router::CMD_JSON => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /json <keys|get|pretty> <input> [path]".into(),
+                ));
+            }
+            let parts = tokenizer.tokenize_str(arg, 3);
+            let action = parts.first().unwrap_or(&"");
+            let input = parts.get(1).unwrap_or(&"");
+            let path = parts.get(2).unwrap_or(&"");
+            let mut params = serde_json::json!({"action": action, "input": input});
+            if !path.is_empty() {
+                params["path"] = serde_json::json!(path);
+            }
+            Ok(("json", params))
+        }
+        cmd_router::CMD_CPU => Ok(("cpu", serde_json::json!({}))),
+        cmd_router::CMD_TOKENS => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /tokens <text or file>".into(),
+                ));
+            }
+            Ok(("tokens", serde_json::json!({"text": arg})))
+        }
+        cmd_router::CMD_BENCH => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /bench <safety|router>".into(),
+                ));
+            }
+            Ok(("bench", serde_json::json!({"target": arg})))
+        }
+        cmd_router::CMD_WEATHER => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool("usage: /weather <city>".into()));
+            }
+            Ok(("weather", serde_json::json!({"city": arg})))
+        }
+        cmd_router::CMD_TRANSLATE => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /translate <lang> <text>".into(),
+                ));
+            }
+            let parts = tokenizer.tokenize_str(arg, 2);
+            let lang = parts.first().unwrap_or(&"");
+            let text = parts.get(1).unwrap_or(&"");
+            Ok(("translate", serde_json::json!({"lang": lang, "text": text})))
+        }
+        cmd_router::CMD_DEFINE => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool("usage: /define <word>".into()));
+            }
+            Ok(("define", serde_json::json!({"word": arg})))
+        }
+        cmd_router::CMD_SUMMARIZE => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /summarize <url>".into(),
+                ));
+            }
+            Ok(("summarize", serde_json::json!({"url": arg})))
+        }
+        _ => Err(crate::error::Error::Tool(format!(
+            "unknown tool command: {cmd_id}"
+        ))),
+    }
+}
 
 /// Escape a string for safe use in shell commands (single-quote wrapping).
 pub(crate) fn shell_escape(s: &str) -> String {
@@ -181,108 +318,13 @@ impl Agent {
     }
 
     /// Build tool name and params from command ID and argument string.
-    /// Uses SIMD arg tokenizer for multi-arg commands.
+    /// Delegates to the free function with this agent's tokenizer.
     pub(crate) fn build_tool_params(
         &mut self,
         cmd_id: i32,
         arg: &str,
     ) -> Result<(&'static str, serde_json::Value)> {
-        match cmd_id {
-            cmd_router::CMD_TIME => Ok(("time", serde_json::json!({}))),
-            cmd_router::CMD_CALC => {
-                if arg.is_empty() {
-                    return Err(crate::error::Error::Tool("usage: /calc <expression>".into()));
-                }
-                Ok(("calc", serde_json::json!({"expr": arg})))
-            }
-            cmd_router::CMD_HTTP => {
-                if arg.is_empty() {
-                    return Err(crate::error::Error::Tool("usage: /http <url>".into()));
-                }
-                Ok(("http", serde_json::json!({"url": arg})))
-            }
-            cmd_router::CMD_SHELL => {
-                if arg.is_empty() {
-                    return Err(crate::error::Error::Tool("usage: /shell <command>".into()));
-                }
-                Ok(("shell", serde_json::json!({"command": arg})))
-            }
-            cmd_router::CMD_MEMORY => {
-                if arg.is_empty() {
-                    return Err(crate::error::Error::Tool(
-                        "usage: /memory <action> [key] [value]".into(),
-                    ));
-                }
-                let parts = self.tokenizer.tokenize_str(arg, 3);
-                let action = parts.first().unwrap_or(&"");
-                let key = parts.get(1).unwrap_or(&"");
-                let value = parts.get(2).unwrap_or(&"");
-                Ok((
-                    "memory",
-                    serde_json::json!({"action": action, "key": key, "value": value}),
-                ))
-            }
-            cmd_router::CMD_READ => {
-                if arg.is_empty() {
-                    return Err(crate::error::Error::Tool("usage: /read <path>".into()));
-                }
-                Ok(("read", serde_json::json!({"path": arg})))
-            }
-            cmd_router::CMD_WRITE => {
-                if arg.is_empty() {
-                    return Err(crate::error::Error::Tool(
-                        "usage: /write <path> <content>".into(),
-                    ));
-                }
-                let parts = self.tokenizer.tokenize_str(arg, 2);
-                let path = parts.first().unwrap_or(&"");
-                let content = parts.get(1).unwrap_or(&"");
-                Ok((
-                    "write",
-                    serde_json::json!({"path": path, "content": content}),
-                ))
-            }
-            cmd_router::CMD_LS => {
-                let path = if arg.is_empty() { "." } else { arg };
-                Ok(("ls", serde_json::json!({"path": path})))
-            }
-            cmd_router::CMD_JSON => {
-                if arg.is_empty() {
-                    return Err(crate::error::Error::Tool(
-                        "usage: /json <keys|get|pretty> <input> [path]".into(),
-                    ));
-                }
-                let parts = self.tokenizer.tokenize_str(arg, 3);
-                let action = parts.first().unwrap_or(&"");
-                let input = parts.get(1).unwrap_or(&"");
-                let path = parts.get(2).unwrap_or(&"");
-                let mut params = serde_json::json!({"action": action, "input": input});
-                if !path.is_empty() {
-                    params["path"] = serde_json::json!(path);
-                }
-                Ok(("json", params))
-            }
-            cmd_router::CMD_CPU => Ok(("cpu", serde_json::json!({}))),
-            cmd_router::CMD_TOKENS => {
-                if arg.is_empty() {
-                    return Err(crate::error::Error::Tool(
-                        "usage: /tokens <text or file>".into(),
-                    ));
-                }
-                Ok(("tokens", serde_json::json!({"text": arg})))
-            }
-            cmd_router::CMD_BENCH => {
-                if arg.is_empty() {
-                    return Err(crate::error::Error::Tool(
-                        "usage: /bench <safety|router>".into(),
-                    ));
-                }
-                Ok(("bench", serde_json::json!({"target": arg})))
-            }
-            _ => Err(crate::error::Error::Tool(format!(
-                "unknown tool command: {cmd_id}"
-            ))),
-        }
+        build_tool_params(cmd_id, arg, &mut self.tokenizer)
     }
 
     pub(crate) async fn run_tool(

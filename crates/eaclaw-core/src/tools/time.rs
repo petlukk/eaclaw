@@ -21,6 +21,7 @@ impl Tool for TimeTool {
     }
 
     async fn execute(&self, _params: serde_json::Value) -> crate::error::Result<String> {
-        Ok(chrono::Utc::now().to_rfc3339())
+        let now = chrono::Utc::now();
+        Ok(now.format("%a %b %-d, %Y — %H:%M UTC").to_string())
     }
 }
