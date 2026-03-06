@@ -4,7 +4,7 @@
 
 eaclaw is an AI agent framework that combines SIMD-accelerated security scanning with streaming LLM integration. Every user message passes through cache-resident Eä kernels for injection detection and secret leak prevention before reaching the LLM. The entire security pipeline runs in single-digit microseconds — six orders of magnitude faster than the LLM call it protects.
 
-**8,606 lines** of Rust + Eä across 48 source files. **209 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime.
+**10,048 lines** of Rust + Eä + Go across 58 source files. **222 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime. WhatsApp integration via Go bridge.
 
 ---
 
@@ -45,8 +45,27 @@ eaclaw is an AI agent framework that combines SIMD-accelerated security scanning
                         └──────────────────────────┼──────────────────────┘
                                                    ▼
                                              Streamed text
-                                             to terminal
+                                             to terminal / WhatsApp
 ```
+
+### WhatsApp Integration
+
+```
+WhatsApp servers ←→ whatsmeow bridge (Go, 229 lines)
+                         │
+                    JSON lines stdin/stdout
+                         │
+                    WhatsAppChannel (Rust)
+                         │
+                    Gateway (per-group routing)
+                         ├── trigger filter (~20 ns, SIMD)
+                         ├── safety scan (~2 µs, fused kernel)
+                         ├── VectorStore recall (per group)
+                         ├── HistoryLog persistence (JSONL)
+                         └── LLM call → response → send
+```
+
+The bridge links as a companion device (like WhatsApp Web). Each chat gets isolated agent state — vector recall, conversation history, message count. History persists to `~/.eaclaw/groups/<jid>/history.jsonl` and is replayed into the VectorStore on startup.
 
 ### Core Principle: SIMD Filter + Scalar Verify
 
@@ -90,7 +109,11 @@ eaclaw/
 │       │   └── tool_dispatch.rs      #   Direct tool execution, pipelines
 │       ├── channel/
 │       │   ├── mod.rs                #   Channel trait (recv/send/send_chunk/flush)
-│       │   └── repl.rs               #   Rustyline REPL (You>/eaclaw> prompts)
+│       │   ├── repl.rs               #   Rustyline REPL (You>/eaclaw> prompts)
+│       │   ├── types.rs              #   InboundMessage, GroupChannel trait, trigger matching
+│       │   ├── whatsapp.rs           #   WhatsApp bridge subprocess channel
+│       │   ├── gateway.rs            #   Per-group message routing + safety + recall
+│       │   └── wa_loop.rs            #   WhatsApp agent loop (gateway → LLM → respond)
 │       ├── llm/
 │       │   ├── mod.rs                #   Message, ContentBlock, LlmProvider trait
 │       │   └── anthropic.rs          #   Anthropic API + SSE streaming parser
@@ -131,13 +154,20 @@ eaclaw/
 │   ├── recall_integration.rs         #   Recall system tests
 │   └── edge_cases.rs                 #   Safety, allowlist, identity tests
 │
+│       └── persist.rs                 #   JSONL history log + VectorStore replay
+│
 ├── eaclaw-cli/                       # Binary entry point
-│   └── src/main.rs                   #   Kernel init → Config → Agent → run()
+│   └── src/main.rs                   #   REPL mode + --whatsapp mode
+│
+├── bridge/                           # WhatsApp bridge (Go)
+│   ├── main.go                       #   whatsmeow client, JSON lines protocol, QR rendering
+│   ├── go.mod                        #   Go module
+│   └── go.sum                        #   Go dependencies
 │
 ├── benches/
 │   └── safety_bench.rs               #   Criterion benchmarks (SIMD vs aho-corasick)
 │
-├── build.sh                          #   Compile .ea → .so + FFI bindings
+├── build.sh                          #   Compile .ea → .so + FFI bindings + Go bridge
 ├── Cargo.toml                        #   Workspace (LTO, codegen-units=1)
 ├── CLAUDE.md                         #   Development conventions
 └── README.md                         #   User documentation
@@ -357,6 +387,13 @@ All 20 commands (8 meta + 12 tools) matched by the SIMD command router with two-
 | `MAX_TURNS` | `10` | Max tool loop iterations |
 | `COMMAND_PREFIX` | `/` | Slash command marker |
 
+### WhatsApp
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EACLAW_BRIDGE_PATH` | auto-detect | Path to `eaclaw-bridge` binary |
+| `EACLAW_WA_SESSION_DIR` | `~/.eaclaw/whatsapp` | Session data directory |
+
 ### Identity
 
 `~/.eaclaw/identity.md` or `EACLAW_IDENTITY` env var — contents prepended to system prompt.
@@ -461,26 +498,27 @@ Safety scanning adds **2–3 microseconds** per turn. Six orders of magnitude fa
 
 | Component | Files | Lines |
 |-----------|------:|------:|
-| Rust — eaclaw-core (src) | 40 | 5,963 |
-| Rust — eaclaw-cli | 1 | 53 |
-| Rust — integration tests | 3 | 1,006 |
+| Rust — eaclaw-core (src) | 45 | 6,901 |
+| Rust — eaclaw-cli | 1 | 98 |
+| Rust — integration tests | 3 | 1,007 |
 | Eä kernels | 7 | 1,301 |
+| Go — WhatsApp bridge | 1 | 229 |
 | Benchmarks | 1 | 283 |
-| **Total** | **52** | **8,606** |
+| **Total** | **58** | **10,048** |
 
 ---
 
 ## Test Results
 
-209 tests across unit tests, integration tests, and edge case tests:
+222 tests across unit tests, integration tests, and edge case tests:
 
 ```
-test result: ok. 136 passed  (unit tests — eaclaw-core lib)
+test result: ok. 149 passed  (unit tests — eaclaw-core lib)
 test result: ok. 32 passed   (edge cases — safety, allowlist, identity, calc)
 test result: ok. 10 passed   (recall — conversation, unicode, large store)
 test result: ok. 31 passed   (tool integration — all 13 tools + router)
 ─────────────────────────────
-         209 passed, 0 failed
+         222 passed, 0 failed
 ```
 
 ---
@@ -488,11 +526,12 @@ test result: ok. 31 passed   (tool integration — all 13 tools + router)
 ## Build & Run
 
 ```bash
-./build.sh                          # Compile .ea → .so via Eä compiler
+./build.sh                          # Compile .ea → .so + build WhatsApp bridge
 cargo build --release               # Build single binary (LTO, embeds kernels)
-cargo test                          # Run all 209 tests (no LD_LIBRARY_PATH needed)
+cargo test                          # Run all 222 tests (no LD_LIBRARY_PATH needed)
 cargo bench                         # Criterion benchmarks
 cargo run --release                 # Start REPL (requires ANTHROPIC_API_KEY)
+cargo run --release -- --whatsapp   # Start WhatsApp mode
 ```
 
 ---

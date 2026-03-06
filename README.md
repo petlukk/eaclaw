@@ -6,26 +6,50 @@ A high-performance AI assistant powered by SIMD kernels written in [Eä](https:/
 
 ## Quick Start
 
-```bash
-# Set your API key
-export ANTHROPIC_API_KEY=sk-ant-...
+### REPL Mode
 
-# Run
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
 ./eaclaw
+```
+
+### WhatsApp Mode
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+./eaclaw --whatsapp
+```
+
+On first run, scan the QR code with WhatsApp ("Link a device"). Then mention `@eaclaw` in any chat to trigger it:
+
+```
+[eaclaw] Connected to WhatsApp!
+[eaclaw] Listening for messages mentioning @eaclaw or !eaclaw
+
+  ⚡ Triggered by Peter — calling LLM...
+  🔧 Tool: shell
+  → [12036342...] eaclaw: I'm in /root/dev/eaclaw
 ```
 
 The binary is self-contained — SIMD kernels are embedded and auto-extracted on first run to `~/.eaclaw/lib/`.
 
 ## Building from Source
 
-Requires the [Eä compiler](https://github.com/petlukk/eacompute) and a Rust toolchain.
+Requires the [Eä compiler](https://github.com/petlukk/eacompute) and a Rust toolchain. Go is required for the WhatsApp bridge.
 
 ```bash
-./build.sh      # Compile .ea kernels → .so
+./build.sh      # Compile .ea kernels → .so + build WhatsApp bridge
 cargo build     # Build the binary (embeds kernels)
-cargo test      # Run tests (209 tests, no LD_LIBRARY_PATH needed)
+cargo test      # Run tests (222 tests, no LD_LIBRARY_PATH needed)
 cargo bench     # Run benchmarks
 ```
+
+## Modes
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| **REPL** | `./eaclaw` | Interactive terminal session with `You>` / `eaclaw>` prompts |
+| **WhatsApp** | `./eaclaw --whatsapp` | WhatsApp bridge — respond to `@eaclaw` mentions in any chat |
 
 ## Commands
 
@@ -78,6 +102,41 @@ Chain tool commands with `|`:
 /shell ls -la | /tokens
 ```
 
+## WhatsApp Integration
+
+eaclaw can run as a WhatsApp agent via a Go bridge binary (whatsmeow).
+
+### How It Works
+
+```
+WhatsApp ←→ whatsmeow bridge (Go) ←JSON lines→ eaclaw (Rust)
+                                                  ├── trigger filter (~20 ns)
+                                                  ├── safety scan (~2 µs)
+                                                  ├── recall context
+                                                  └── LLM → response
+```
+
+1. The bridge links as a companion device to your WhatsApp account
+2. All messages are received; only those mentioning `@eaclaw` or `!eaclaw` are processed
+3. Each chat gets its own agent with isolated memory (VectorStore) and history (JSONL)
+4. History persists to `~/.eaclaw/groups/` and is replayed into recall on startup
+
+### WhatsApp Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EACLAW_BRIDGE_PATH` | auto-detect | Path to the `eaclaw-bridge` binary |
+| `EACLAW_WA_SESSION_DIR` | `~/.eaclaw/whatsapp` | WhatsApp session data directory |
+
+### Trigger Patterns
+
+Messages are processed when they contain:
+- `@eaclaw` — mention anywhere in the message
+- `!eaclaw` — bang prefix
+- `eaclaw ...` — message starts with the agent name
+
+The trigger name matches `AGENT_NAME` (case-insensitive).
+
 ## Configuration
 
 ### Environment Variables
@@ -86,7 +145,7 @@ Chain tool commands with `|`:
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | *(required)* | Anthropic API key |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model to use |
-| `AGENT_NAME` | `eaclaw` | Agent display name |
+| `AGENT_NAME` | `eaclaw` | Agent display name and trigger word |
 | `MAX_TURNS` | `10` | Max tool-use turns per conversation message |
 | `COMMAND_PREFIX` | `/` | Prefix for slash commands |
 
@@ -162,6 +221,8 @@ Tool outputs are also scanned for secret leaks before display.
 ### Conversation Recall
 
 `/recall` uses byte-histogram embeddings (256-dim, one per byte value) with SIMD cosine similarity for microsecond-latency conversation search. No external APIs or models — pure SIMD.
+
+Ring buffer (1024 entries) with recency boost ensures recent conversation context is preferred.
 
 ## License
 

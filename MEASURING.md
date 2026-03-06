@@ -20,7 +20,7 @@ Run all tests before and after changes. Nothing ships with failures.
 cargo test
 ```
 
-Expected: 209 tests pass.
+Expected: 222 tests pass.
 
 ---
 
