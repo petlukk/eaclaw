@@ -15,6 +15,11 @@ async fn main() {
         )
         .init();
 
+    if let Err(e) = eaclaw_core::kernels::init() {
+        eprintln!("Failed to initialize SIMD kernels: {e}");
+        std::process::exit(1);
+    }
+
     let config = match Config::from_env() {
         Ok(c) => c,
         Err(e) => {
