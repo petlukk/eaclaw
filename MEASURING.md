@@ -8,7 +8,6 @@ How and what we measure after code changes.
 
 ```bash
 cd /root/dev/eaclaw
-export LD_LIBRARY_PATH=$(pwd)/target/kernels
 ```
 
 ---
@@ -21,7 +20,7 @@ Run all tests before and after changes. Nothing ships with failures.
 cargo test
 ```
 
-Expected: 71 tests pass.
+Expected: 209 tests pass.
 
 ---
 
