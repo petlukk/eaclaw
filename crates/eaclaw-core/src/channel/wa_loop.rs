@@ -66,15 +66,6 @@ pub async fn run(
             }
         };
 
-        // Show all incoming messages in the terminal
-        let direction = if msg.is_from_me { "→" } else { "←" };
-        eprintln!(
-            "  {direction} [{jid}] {sender}: {text}",
-            jid = short_jid(&msg.jid),
-            sender = if msg.is_from_me { "You".to_string() } else { msg.sender_name.clone() },
-            text = truncate(&msg.text, 120),
-        );
-
         let processed = match gateway.process_inbound(&msg) {
             Some(p) => p,
             None => continue,
