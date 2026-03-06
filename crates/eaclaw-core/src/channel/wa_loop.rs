@@ -84,8 +84,11 @@ pub async fn run(
                 sender_name,
                 context,
             } => {
+                // Strip trigger prefix to get the actual command/message
+                let stripped = strip_trigger(&text, &config.agent_name);
+
                 // Check for /ainur command
-                if let Some((count, task)) = ainur::parse_ainur(&text) {
+                if let Some((count, task)) = ainur::parse_ainur(stripped) {
                     eprintln!(
                         "  ⚡ Triggered by {sender_name} — /ainur {count}..."
                     );
@@ -184,6 +187,25 @@ pub async fn run(
     }
 
     Ok(())
+}
+
+/// Strip trigger prefix (@eaclaw, !eaclaw, or "eaclaw ") from message text.
+fn strip_trigger<'a>(text: &'a str, trigger: &str) -> &'a str {
+    let lower = text.to_lowercase();
+    let trig = trigger.to_lowercase();
+
+    // Try @trigger or !trigger
+    for prefix in [format!("@{trig}"), format!("!{trig}")] {
+        if let Some(pos) = lower.find(&prefix) {
+            let after = pos + prefix.len();
+            return text[after..].trim_start();
+        }
+    }
+    // Try "trigger " at start
+    if lower.starts_with(&trig) {
+        return text[trig.len()..].trim_start();
+    }
+    text
 }
 
 /// Shorten a JID for display: "1234567890@s.whatsapp.net" → "1234567890"
