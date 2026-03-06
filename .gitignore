@@ -12,3 +12,8 @@ perf.data.old
 /leak_scanner.rs
 /sanitizer.rs
 /search.rs
+# Plans and personal files
+PLAN.md
+v2_plan.md
+CLAUDE.md
+peter.txt
