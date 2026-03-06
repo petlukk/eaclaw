@@ -114,9 +114,10 @@ The hot path is designed to stay in L1 cache. Every SIMD kernel fits comfortably
 | Safety scan (injection + leak) | 100 KB | 98 µs | 1.0 GB/s |
 | Full safety layer (SIMD + verify) | 1 KB | **2.1 µs** | 0.5 GB/s |
 | Full safety layer (SIMD + verify) | 100 KB | 179 µs | 0.6 GB/s |
-| Command routing | per command | **960 ns** | — |
+| Command routing (SIMD hash + verify) | per command | **9 ns** | — |
+| Conversation recall (20 entries) | top-5 query | **1.7 µs** | — |
 
-All kernels use `u8x16` SIMD (SSE2/NEON), keeping instruction footprint small:
+All kernels use `u8x16` SIMD (SSE2), keeping instruction footprint small:
 
 | Kernel | `.text` size | Fits in |
 |--------|-------------|---------|
@@ -132,7 +133,7 @@ The safety scan adds **~2 µs** of latency to every message — invisible next t
 
 ## Architecture
 
-eaclaw uses a **SIMD filter + scalar verify** architecture. Eä kernels process input at cache-line speed, rejecting >99% of bytes. Rust scalar code verifies only at candidate positions.
+eaclaw uses a **SIMD filter + scalar verify** architecture. Eä kernels process input at cache-line speed, rejecting ~97% of byte positions. Rust scalar code verifies only at candidate positions.
 
 ### SIMD Kernels
 

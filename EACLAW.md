@@ -4,7 +4,7 @@
 
 eaclaw is an AI agent framework that combines SIMD-accelerated security scanning with streaming LLM integration. Every user message passes through cache-resident Eä kernels for injection detection and secret leak prevention before reaching the LLM. The entire security pipeline runs in single-digit microseconds — six orders of magnitude faster than the LLM call it protects.
 
-**8,606 lines** of Rust + Eä across 49 source files. **209 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime.
+**8,606 lines** of Rust + Eä across 48 source files. **209 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime.
 
 ---
 
@@ -50,7 +50,7 @@ eaclaw is an AI agent framework that combines SIMD-accelerated security scanning
 
 ### Core Principle: SIMD Filter + Scalar Verify
 
-Eä kernels process input at memory bandwidth (~GB/s), rejecting >99% of bytes. Only candidate positions are passed to cheap scalar verification in Rust. This two-phase design means:
+Eä kernels process input at memory bandwidth (~GB/s), rejecting ~97% of bytes. Only candidate positions are passed to cheap scalar verification in Rust. This two-phase design means:
 
 - SIMD kernels never allocate — all memory is caller-provided
 - Output is bitmasks, not position arrays — one i32 per 16-byte block
@@ -60,6 +60,8 @@ Eä kernels process input at memory bandwidth (~GB/s), rejecting >99% of bytes. 
 ### Single Binary Packaging
 
 All 7 Eä kernel `.so` files (~126 KB total) are embedded in the binary via `include_bytes!` at compile time. On first run, they are extracted to `~/.eaclaw/lib/v{VERSION}/` and loaded via `libloading`. No `LD_LIBRARY_PATH` required.
+
+> **Note:** Eä kernels target x86_64 SIMD. The compiler supports aarch64 cross-compilation but this has not been tested for eaclaw.
 
 ---
 
@@ -145,11 +147,11 @@ eaclaw/
 
 ## Eä Kernels
 
-Seven kernels compiled to shared libraries by the Eä v1.6.0 compiler. All use `u8x16` SIMD vectors (not `u8x32`, which has movemask sign-bit issues). All provide x86_64 SIMD and aarch64 scalar implementations.
+Seven kernels compiled to shared libraries by the Eä v1.6.0 compiler. All use `u8x16` SIMD vectors (not `u8x32`, which has movemask sign-bit issues). Compiled and tested on x86_64.
 
 ### command_router (1,243 bytes)
 
-Hash-based slash command matching. Reads 4 bytes after `/`, computes `b1 + b2*256 + b3*65536 + b4*16777216`, compares against 20 known hashes. Two-stage verification in Rust prevents hash collisions. Runs entirely in registers.
+Hash-based slash command matching. Reads 4 bytes after `/`, computes `b1 + b2*256 + b3*65536 + b4*16777216`, compares against 20 known hashes. Two-stage verification in Rust prevents hash collisions. Measured at **9 ns/call** (release build, 13-command benchmark).
 
 ```
 Meta:  /help /quit /tools /clear /model /profile /tasks /recall
@@ -224,7 +226,7 @@ leak scan only (no injection check on outputs)
 
 ### Two-Phase Detection
 
-1. **SIMD filter** — The fused kernel scans all bytes at memory bandwidth. For each 16-byte block, it checks if any adjacent byte pair matches a known prefix. Output: one bitmask per block. This rejects >99% of bytes.
+1. **SIMD filter** — The fused kernel scans all bytes at memory bandwidth. For each 16-byte block, it checks if any adjacent byte pair matches a known prefix. Output: one bitmask per block. On typical English text, this rejects ~97% of byte positions (measured across 8 representative prompts).
 
 2. **Scalar verify** — For each set bit in the mask, Rust checks the full pattern (case-insensitive for injection, case-sensitive + format validation for leaks). This runs on candidates only — typically 0–5 positions per message.
 
@@ -236,7 +238,7 @@ leak scan only (no injection check on outputs)
 
 Pipeline: `embed_bytes → normalize_vectors (SIMD) → batch_cosine (SIMD FMA) → top_k (SIMD)`
 
-All conversation turns (user + assistant) are indexed. Zero API calls, microsecond-latency search.
+All conversation turns (user + assistant) are indexed. Zero API calls. Measured latency: **1.7 µs** at 20 entries (typical conversation), **22 µs** at 500 entries.
 
 ---
 
@@ -267,7 +269,7 @@ loop {
     // Pipeline detection: "cmd1 | /cmd2"
     if input.contains(" | /") { execute_pipeline(); continue; }
 
-    let cmd = SIMD_command_router(input);       // ~960 ns
+    let cmd = SIMD_command_router(input);       // ~9 ns
     if cmd == RECALL { recall_search(); continue; }
     if cmd == TASKS  { show_tasks(); continue; }
     if cmd.is_meta() { handle_meta(); continue; }
@@ -341,7 +343,7 @@ Background execution: append `&` (e.g., `/shell sleep 5 &`). Pipelines: `/shell 
 | `/tasks` | CMD_TASKS (18) | List background tasks |
 | `/recall` | CMD_RECALL (19) | Search conversation history (SIMD) |
 
-All 20 commands (8 meta + 12 tools) matched by the SIMD command router with two-stage verification (hash + full name check).
+All 20 commands (8 meta + 12 tools) matched by the SIMD command router with two-stage verification (hash + full name check). Measured at **9 ns/call**.
 
 ---
 
