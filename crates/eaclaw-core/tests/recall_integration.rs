@@ -55,7 +55,8 @@ fn test_recall_self_similarity() {
 
     let results = store.recall(text, 1);
     assert_eq!(results.len(), 1);
-    assert!(results[0].score > 0.95, "self-similarity should be ~1.0, got {}", results[0].score);
+    // Score includes recency boost (0.85 base for oldest of 2 entries)
+    assert!(results[0].score > 0.80, "self-similarity should be high, got {}", results[0].score);
     assert_eq!(results[0].text, text);
 }
 
