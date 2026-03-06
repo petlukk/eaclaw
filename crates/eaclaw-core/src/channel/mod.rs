@@ -1,4 +1,7 @@
+pub mod gateway;
 pub mod repl;
+pub mod types;
+pub mod whatsapp;
 
 use async_trait::async_trait;
 
