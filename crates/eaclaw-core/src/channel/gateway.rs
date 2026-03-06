@@ -64,11 +64,6 @@ impl Gateway {
     /// Process an inbound message. Returns a response if the message
     /// matches the trigger and passes safety checks, or None to skip.
     pub fn process_inbound(&mut self, msg: &InboundMessage) -> Option<ProcessedMessage> {
-        // Skip our own messages
-        if msg.is_from_me {
-            return None;
-        }
-
         // Trigger check (~20 ns)
         if !matches_trigger(&msg.text, &self.trigger) {
             return None;

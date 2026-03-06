@@ -19,6 +19,11 @@ Be concise — WhatsApp messages should be short and readable. \
 You have access to tools. Use them when they help answer the question. \
 Reply in the same language the user writes in.";
 
+/// Print a status line to stderr (visible in the terminal).
+fn status(msg: &str) {
+    eprintln!("[eaclaw] {msg}");
+}
+
 /// Run the WhatsApp agent loop.
 pub async fn run(
     bridge_path: &str,
@@ -37,22 +42,38 @@ pub async fn run(
         None => WA_SYSTEM_PROMPT.to_string(),
     };
 
-    tracing::info!("WhatsApp agent loop started, waiting for messages...");
+    status("Waiting for WhatsApp connection...");
 
     // Wait for connection
     while !channel.is_connected() {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
-    tracing::info!("WhatsApp bridge connected, listening for messages");
+
+    status("Connected to WhatsApp!");
+    status(&format!(
+        "Listening for messages mentioning @{} or !{}",
+        config.agent_name, config.agent_name
+    ));
+    status("Press Ctrl+C to stop.");
+    eprintln!();
 
     loop {
         let msg = match channel.recv().await {
             Some(m) => m,
             None => {
-                tracing::info!("WhatsApp channel closed");
+                status("WhatsApp channel closed.");
                 break;
             }
         };
+
+        // Show all incoming messages in the terminal
+        let direction = if msg.is_from_me { "→" } else { "←" };
+        eprintln!(
+            "  {direction} [{jid}] {sender}: {text}",
+            jid = short_jid(&msg.jid),
+            sender = if msg.is_from_me { "You".to_string() } else { msg.sender_name.clone() },
+            text = truncate(&msg.text, 120),
+        );
 
         let processed = match gateway.process_inbound(&msg) {
             Some(p) => p,
@@ -61,7 +82,7 @@ pub async fn run(
 
         match processed.action {
             Action::Blocked(reason) => {
-                tracing::warn!(jid = %processed.jid, %reason, "message blocked");
+                eprintln!("  ⚠ Blocked: {reason}");
                 channel
                     .send(&processed.jid, &format!("Message blocked: {reason}"))
                     .await;
@@ -71,6 +92,10 @@ pub async fn run(
                 sender_name,
                 context,
             } => {
+                eprintln!(
+                    "  ⚡ Triggered by {sender_name} — calling LLM..."
+                );
+
                 // Build conversation with context
                 let mut messages = Vec::new();
 
@@ -111,7 +136,7 @@ pub async fn run(
                 {
                     Ok(text) => text,
                     Err(e) => {
-                        tracing::error!(error = %e, "LLM error");
+                        eprintln!("  ✗ LLM error: {e}");
                         format!("Sorry, I encountered an error: {e}")
                     }
                 };
@@ -120,17 +145,31 @@ pub async fn run(
                 channel.send(&processed.jid, &response_text).await;
                 gateway.record_response(&processed.jid, &response_text);
 
-                tracing::info!(
-                    jid = %processed.jid,
-                    sender = %sender_name,
-                    response_len = response_text.len(),
-                    "responded"
+                eprintln!(
+                    "  → [{jid}] eaclaw: {text}",
+                    jid = short_jid(&processed.jid),
+                    text = truncate(&response_text, 120),
                 );
             }
         }
     }
 
     Ok(())
+}
+
+/// Shorten a JID for display: "1234567890@s.whatsapp.net" → "1234567890"
+fn short_jid(jid: &str) -> &str {
+    jid.split('@').next().unwrap_or(jid)
+}
+
+/// Truncate text for terminal display.
+fn truncate(s: &str, max: usize) -> String {
+    let s = s.replace('\n', " ");
+    if s.len() <= max {
+        s
+    } else {
+        format!("{}...", &s[..max])
+    }
 }
 
 /// Run an LLM turn with tool loop, returning the final text response.
@@ -185,6 +224,7 @@ async fn run_llm_turn(
         // Execute tools
         let mut result_blocks = Vec::new();
         for (id, name, input) in &tool_uses {
+            eprintln!("  🔧 Tool: {name}");
             let result = match tools.get(name) {
                 Some(tool) => match tool.execute(input.clone()).await {
                     Ok(output) => {
