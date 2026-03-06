@@ -1,5 +1,6 @@
 use super::Tool;
 use async_trait::async_trait;
+use futures::StreamExt;
 
 pub struct HttpTool;
 
@@ -44,5 +45,49 @@ impl Tool for HttpTool {
         };
 
         Ok(format!("HTTP {status}\n{body}"))
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    async fn execute_stream(
+        &self,
+        params: serde_json::Value,
+        on_chunk: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> crate::error::Result<()> {
+        let url = params["url"]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::Tool("missing 'url' parameter".into()))?;
+
+        let response = reqwest::get(url).await?;
+        let status = response.status();
+        on_chunk(&format!("HTTP {status}\n"));
+
+        let mut stream = response.bytes_stream();
+        let mut total = 0usize;
+        let max_len = 32 * 1024;
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| crate::error::Error::Tool(format!("stream error: {e}")))?;
+            if total >= max_len {
+                break;
+            }
+            let remaining = max_len - total;
+            let slice = if bytes.len() > remaining {
+                &bytes[..remaining]
+            } else {
+                &bytes[..]
+            };
+            let text = String::from_utf8_lossy(slice);
+            on_chunk(&text);
+            total += slice.len();
+        }
+
+        if total >= max_len {
+            on_chunk("... (truncated)");
+        }
+
+        Ok(())
     }
 }

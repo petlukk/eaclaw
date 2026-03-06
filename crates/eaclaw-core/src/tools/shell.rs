@@ -1,5 +1,6 @@
 use super::Tool;
 use async_trait::async_trait;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 pub struct ShellTool;
@@ -59,5 +60,52 @@ impl Tool for ShellTool {
         }
 
         Ok(result)
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    async fn execute_stream(
+        &self,
+        params: serde_json::Value,
+        on_chunk: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> crate::error::Result<()> {
+        let cmd = params["command"]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::Tool("missing 'command' parameter".into()))?;
+
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| crate::error::Error::Tool(format!("failed to execute: {e}")))?;
+
+        // Stream stdout line by line
+        if let Some(stdout) = child.stdout.take() {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Some(line) = reader
+                .next_line()
+                .await
+                .map_err(|e| crate::error::Error::Tool(format!("read error: {e}")))?
+            {
+                on_chunk(&line);
+                on_chunk("\n");
+            }
+        }
+
+        // Collect stderr after stdout is done
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| crate::error::Error::Tool(format!("wait error: {e}")))?;
+
+        if !status.success() {
+            on_chunk(&format!("(exit code: {})", status.code().unwrap_or(-1)));
+        }
+
+        Ok(())
     }
 }

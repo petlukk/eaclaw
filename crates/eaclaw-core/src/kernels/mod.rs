@@ -1,5 +1,6 @@
 pub mod ffi;
 
+pub mod arg_tokenizer;
 pub mod byte_classifier;
 pub mod command_router;
 pub mod fused_safety;

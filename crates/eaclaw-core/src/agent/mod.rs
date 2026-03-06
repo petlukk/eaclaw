@@ -1,8 +1,10 @@
+pub mod background;
 pub mod router;
 
 use crate::channel::Channel;
 use crate::config::Config;
 use crate::error::Result;
+use crate::kernels::arg_tokenizer::ArgTokenizer;
 use crate::kernels::command_router as cmd_router;
 use crate::llm::{
     ContentBlock, LlmProvider, Message, Role, StopReason, ToolDef,
@@ -11,6 +13,11 @@ use crate::safety::SafetyLayer;
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Instant;
+
+/// Escape a string for safe use in shell commands (single-quote wrapping).
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
 
 const SYSTEM_PROMPT: &str = "\
 You are eaclaw, a high-performance AI assistant. \
@@ -53,6 +60,8 @@ pub struct Agent {
     safety: SafetyLayer,
     messages: Vec<Message>,
     last_timing: Option<TurnTiming>,
+    bg_tasks: background::TaskTable,
+    tokenizer: ArgTokenizer,
 }
 
 impl Agent {
@@ -69,6 +78,8 @@ impl Agent {
             safety,
             messages: Vec::new(),
             last_timing: None,
+            bg_tasks: background::TaskTable::new(),
+            tokenizer: ArgTokenizer::with_capacity(256),
         }
     }
 
@@ -89,8 +100,23 @@ impl Agent {
                 None => break,
             };
 
+            // Pipeline detection: split on " | /" before routing
+            if msg.starts_with(&self.config.command_prefix) && msg.contains(" | /") {
+                match self.execute_pipeline(&msg, channel).await {
+                    Ok(()) => {}
+                    Err(e) => channel.send(&format!("Pipeline error: {e}")).await,
+                }
+                continue;
+            }
+
             // Two-stage SIMD command routing (hash + verify)
             let (cmd_id, cmd_arg) = cmd_router::match_command_verified(msg.as_bytes());
+
+            // Handle /tasks meta command (ID 18, outside 0-5 range)
+            if cmd_id == cmd_router::CMD_TASKS {
+                channel.send(&self.bg_tasks.format_list()).await;
+                continue;
+            }
 
             // Handle meta commands
             if cmd_id >= cmd_router::CMD_HELP && cmd_id <= cmd_router::CMD_PROFILE {
@@ -134,29 +160,83 @@ impl Agent {
 
             // Handle direct tool commands — bypass the LLM
             if cmd_id >= cmd_router::CMD_TOOL_FIRST && cmd_id <= cmd_router::CMD_TOOL_LAST {
-                let tool_start = Instant::now();
-                let arg_str = String::from_utf8_lossy(cmd_arg);
-                let result = self.execute_direct_tool(cmd_id, &arg_str).await;
-                let tool_ms = tool_start.elapsed().as_millis() as u64;
+                let arg_str = String::from_utf8_lossy(cmd_arg).into_owned();
                 let tool_name = cmd_router::command_name(cmd_id).unwrap_or("unknown");
 
-                match result {
-                    Ok(output) => {
-                        // Leak scan on tool output
-                        let scan = self.safety.scan_output(&output);
-                        if scan.leaks_found {
-                            channel
-                                .send("Tool output blocked: contains potential secrets.")
-                                .await;
-                        } else {
-                            channel.send(&output).await;
+                // Detect background execution: trailing " &"
+                let (arg_str, is_background) = if arg_str.ends_with(" &") {
+                    (arg_str[..arg_str.len() - 2].to_string(), true)
+                } else if arg_str == "&" {
+                    (String::new(), true)
+                } else {
+                    (arg_str, false)
+                };
+
+                if is_background {
+                    // Spawn as background task
+                    match self.build_tool_params(cmd_id, &arg_str) {
+                        Ok((name, params)) => {
+                            let tool = self.tools.get(name).cloned();
+                            if let Some(tool) = tool {
+                                let task_id = self.bg_tasks.register(
+                                    tool_name,
+                                    &format!("/{tool_name} {arg_str}"),
+                                );
+                                let bg_tasks = self.bg_tasks.clone();
+                                tokio::spawn(async move {
+                                    match tool.execute(params).await {
+                                        Ok(output) => bg_tasks.complete(task_id, output),
+                                        Err(e) => bg_tasks.fail(task_id, e.to_string()),
+                                    }
+                                });
+                                channel
+                                    .send(&format!("[{task_id}] Started in background: /{tool_name} {arg_str}"))
+                                    .await;
+                            } else {
+                                channel
+                                    .send(&format!("Tool error: {tool_name} not registered"))
+                                    .await;
+                            }
+                        }
+                        Err(e) => {
+                            channel.send(&format!("Tool error: {e}")).await;
                         }
                     }
-                    Err(e) => {
+                    continue;
+                }
+
+                // Foreground execution
+                let tool_start = Instant::now();
+
+                // Check if tool supports streaming
+                let tool_streams = self.tools.get(tool_name)
+                    .map_or(false, |t| t.supports_streaming());
+
+                if tool_streams {
+                    let result = self.execute_direct_tool_stream(cmd_id, &arg_str, channel).await;
+                    if let Err(e) = result {
                         channel.send(&format!("Tool error: {e}")).await;
+                    }
+                } else {
+                    let result = self.execute_direct_tool(cmd_id, &arg_str).await;
+                    match result {
+                        Ok(output) => {
+                            let scan = self.safety.scan_output(&output);
+                            if scan.leaks_found {
+                                channel
+                                    .send("Tool output blocked: contains potential secrets.")
+                                    .await;
+                            } else {
+                                channel.send(&output).await;
+                            }
+                        }
+                        Err(e) => {
+                            channel.send(&format!("Tool error: {e}")).await;
+                        }
                     }
                 }
 
+                let tool_ms = tool_start.elapsed().as_millis() as u64;
                 self.last_timing = Some(TurnTiming {
                     safety_scan_us: 0,
                     llm_call_ms: 0,
@@ -344,91 +424,255 @@ impl Agent {
         Ok(())
     }
 
-    /// Execute a tool directly from a slash command, bypassing the LLM.
-    async fn execute_direct_tool(&self, cmd_id: i32, arg: &str) -> Result<String> {
-        match cmd_id {
-            cmd_router::CMD_TIME => {
-                self.run_tool("time", serde_json::json!({})).await
+    /// Execute a pipeline of tool commands separated by " | ".
+    /// Output of each stage becomes the argument to the next.
+    async fn execute_pipeline(&mut self, input: &str, channel: &dyn Channel) -> Result<()> {
+        let stages: Vec<&str> = input.split(" | ").collect();
+        if stages.len() < 2 {
+            return Err(crate::error::Error::Tool("not a pipeline".into()));
+        }
+
+        let mut pipe_data: Option<String> = None;
+        let mut tool_execs: Vec<(String, u64)> = Vec::new();
+        let _pipeline_start = Instant::now();
+
+        for (i, stage) in stages.iter().enumerate() {
+            let stage = stage.trim();
+            let (cmd_id, cmd_arg) = cmd_router::match_command_verified(stage.as_bytes());
+
+            if cmd_id < cmd_router::CMD_TOOL_FIRST || cmd_id > cmd_router::CMD_TOOL_LAST {
+                return Err(crate::error::Error::Tool(format!(
+                    "stage {}: not a tool command: {stage}",
+                    i + 1
+                )));
             }
+
+            let tool_name = cmd_router::command_name(cmd_id).unwrap_or("unknown");
+            let arg_str = String::from_utf8_lossy(cmd_arg).into_owned();
+
+            // Build params — for piped stages, use piped data as default arg
+            let effective_arg = if pipe_data.is_some() && arg_str.is_empty() {
+                // Use a placeholder so build_tool_params doesn't reject empty args
+                "__piped__".to_string()
+            } else {
+                arg_str.clone()
+            };
+            let (name, mut params) = self.build_tool_params(cmd_id, &effective_arg)?;
+            if let Some(ref piped) = pipe_data {
+                self.inject_pipe_data(cmd_id, &mut params, piped, &arg_str);
+            }
+
+            let tool_start = Instant::now();
+            let output = self.run_tool(name, params).await?;
+            let tool_ms = tool_start.elapsed().as_millis() as u64;
+            tool_execs.push((tool_name.to_string(), tool_ms));
+
+            pipe_data = Some(output);
+        }
+
+        // Safety scan on final output
+        if let Some(ref output) = pipe_data {
+            let scan = self.safety.scan_output(output);
+            if scan.leaks_found {
+                channel
+                    .send("Pipeline output blocked: contains potential secrets.")
+                    .await;
+            } else {
+                channel.send(output).await;
+            }
+        }
+
+        self.last_timing = Some(TurnTiming {
+            safety_scan_us: 0,
+            llm_call_ms: 0,
+            tool_execs,
+        });
+
+        Ok(())
+    }
+
+    /// Inject piped data into tool parameters.
+    /// Each tool has a primary input field that receives piped data.
+    fn inject_pipe_data(
+        &self,
+        cmd_id: i32,
+        params: &mut serde_json::Value,
+        piped: &str,
+        _arg: &str,
+    ) {
+        match cmd_id {
+            cmd_router::CMD_CALC => {
+                params["expr"] = serde_json::json!(piped);
+            }
+            cmd_router::CMD_SHELL => {
+                // Pipe as stdin: wrap command with echo piped | command
+                if let Some(cmd) = params["command"].as_str() {
+                    let wrapped = format!("echo {} | {cmd}", shell_escape(piped));
+                    params["command"] = serde_json::json!(wrapped);
+                }
+            }
+            cmd_router::CMD_HTTP => {
+                // Piped data becomes the URL
+                params["url"] = serde_json::json!(piped.trim());
+            }
+            cmd_router::CMD_TOKENS => {
+                params["text"] = serde_json::json!(piped);
+            }
+            cmd_router::CMD_JSON => {
+                // Piped JSON goes to input field; action/path kept from args
+                params["input"] = serde_json::json!(piped);
+            }
+            cmd_router::CMD_READ => {
+                // Piped data as file path
+                params["path"] = serde_json::json!(piped.trim());
+            }
+            cmd_router::CMD_WRITE => {
+                // Piped data as content; path must come from args
+                params["content"] = serde_json::json!(piped);
+            }
+            cmd_router::CMD_MEMORY => {
+                // Piped data as value for write, or key for read
+                if params["action"].as_str() == Some("write") {
+                    params["value"] = serde_json::json!(piped);
+                } else if params["action"].as_str() == Some("read") {
+                    params["key"] = serde_json::json!(piped.trim());
+                }
+            }
+            _ => {
+                // For tools without a clear pipe target, ignore piped data
+            }
+        }
+    }
+
+    /// Execute a tool directly from a slash command, bypassing the LLM.
+    async fn execute_direct_tool(&mut self, cmd_id: i32, arg: &str) -> Result<String> {
+        let (name, params) = self.build_tool_params(cmd_id, arg)?;
+        self.run_tool(name, params).await
+    }
+
+    /// Execute a streaming tool command, sending chunks directly to the channel.
+    async fn execute_direct_tool_stream(
+        &mut self,
+        cmd_id: i32,
+        arg: &str,
+        channel: &dyn Channel,
+    ) -> Result<()> {
+        let (tool_name, params) = self.build_tool_params(cmd_id, arg)?;
+
+        let tool = self.tools.get(tool_name)
+            .ok_or_else(|| crate::error::Error::Tool(format!("{tool_name} tool not registered")))?;
+
+        // Collect chunks, then leak-scan full output before sending to channel.
+        let mut chunks: Vec<String> = Vec::new();
+        let mut on_chunk = |chunk: &str| {
+            chunks.push(chunk.to_string());
+        };
+
+        tool.execute_stream(params, &mut on_chunk).await?;
+
+        // Leak scan the full output
+        let full_output: String = chunks.iter().map(|s| s.as_str()).collect();
+        let scan = self.safety.scan_output(&full_output);
+        if scan.leaks_found {
+            channel
+                .send("Tool output blocked: contains potential secrets.")
+                .await;
+            return Ok(());
+        }
+
+        // Stream chunks to channel
+        if !chunks.is_empty() {
+            print!("\n");
+            for chunk in &chunks {
+                channel.send_chunk(chunk).await;
+            }
+            channel.flush().await;
+        }
+
+        Ok(())
+    }
+
+    /// Build tool name and params from command ID and argument string.
+    /// Uses SIMD arg tokenizer for multi-arg commands.
+    fn build_tool_params(&mut self, cmd_id: i32, arg: &str) -> Result<(&'static str, serde_json::Value)> {
+        match cmd_id {
+            cmd_router::CMD_TIME => Ok(("time", serde_json::json!({}))),
             cmd_router::CMD_CALC => {
                 if arg.is_empty() {
                     return Err(crate::error::Error::Tool("usage: /calc <expression>".into()));
                 }
-                self.run_tool("calc", serde_json::json!({"expr": arg})).await
+                Ok(("calc", serde_json::json!({"expr": arg})))
             }
             cmd_router::CMD_HTTP => {
                 if arg.is_empty() {
                     return Err(crate::error::Error::Tool("usage: /http <url>".into()));
                 }
-                self.run_tool("http", serde_json::json!({"url": arg})).await
+                Ok(("http", serde_json::json!({"url": arg})))
             }
             cmd_router::CMD_SHELL => {
                 if arg.is_empty() {
                     return Err(crate::error::Error::Tool("usage: /shell <command>".into()));
                 }
-                self.run_tool("shell", serde_json::json!({"command": arg})).await
+                Ok(("shell", serde_json::json!({"command": arg})))
             }
             cmd_router::CMD_MEMORY => {
                 if arg.is_empty() {
                     return Err(crate::error::Error::Tool("usage: /memory <action> [key] [value]".into()));
                 }
-                let parts: Vec<&str> = arg.splitn(3, ' ').collect();
-                let action = parts[0];
+                // SIMD tokenize: action key value (3 tokens max)
+                let parts = self.tokenizer.tokenize_str(arg, 3);
+                let action = parts.first().unwrap_or(&"");
                 let key = parts.get(1).unwrap_or(&"");
                 let value = parts.get(2).unwrap_or(&"");
-                self.run_tool("memory", serde_json::json!({
-                    "action": action, "key": key, "value": value,
-                })).await
+                Ok(("memory", serde_json::json!({"action": action, "key": key, "value": value})))
             }
             cmd_router::CMD_READ => {
                 if arg.is_empty() {
                     return Err(crate::error::Error::Tool("usage: /read <path>".into()));
                 }
-                self.run_tool("read", serde_json::json!({"path": arg})).await
+                Ok(("read", serde_json::json!({"path": arg})))
             }
             cmd_router::CMD_WRITE => {
                 if arg.is_empty() {
                     return Err(crate::error::Error::Tool("usage: /write <path> <content>".into()));
                 }
-                let parts: Vec<&str> = arg.splitn(2, ' ').collect();
-                let path = parts[0];
+                // SIMD tokenize: path content (2 tokens max)
+                let parts = self.tokenizer.tokenize_str(arg, 2);
+                let path = parts.first().unwrap_or(&"");
                 let content = parts.get(1).unwrap_or(&"");
-                self.run_tool("write", serde_json::json!({
-                    "path": path, "content": content,
-                })).await
+                Ok(("write", serde_json::json!({"path": path, "content": content})))
             }
             cmd_router::CMD_LS => {
                 let path = if arg.is_empty() { "." } else { arg };
-                self.run_tool("ls", serde_json::json!({"path": path})).await
+                Ok(("ls", serde_json::json!({"path": path})))
             }
             cmd_router::CMD_JSON => {
                 if arg.is_empty() {
                     return Err(crate::error::Error::Tool("usage: /json <keys|get|pretty> <input> [path]".into()));
                 }
-                let parts: Vec<&str> = arg.splitn(3, ' ').collect();
-                let action = parts[0];
+                // SIMD tokenize: action input path (3 tokens max)
+                let parts = self.tokenizer.tokenize_str(arg, 3);
+                let action = parts.first().unwrap_or(&"");
                 let input = parts.get(1).unwrap_or(&"");
                 let path = parts.get(2).unwrap_or(&"");
                 let mut params = serde_json::json!({"action": action, "input": input});
                 if !path.is_empty() {
                     params["path"] = serde_json::json!(path);
                 }
-                self.run_tool("json", params).await
+                Ok(("json", params))
             }
-            cmd_router::CMD_CPU => {
-                self.run_tool("cpu", serde_json::json!({})).await
-            }
+            cmd_router::CMD_CPU => Ok(("cpu", serde_json::json!({}))),
             cmd_router::CMD_TOKENS => {
                 if arg.is_empty() {
                     return Err(crate::error::Error::Tool("usage: /tokens <text or file>".into()));
                 }
-                self.run_tool("tokens", serde_json::json!({"text": arg})).await
+                Ok(("tokens", serde_json::json!({"text": arg})))
             }
             cmd_router::CMD_BENCH => {
                 if arg.is_empty() {
                     return Err(crate::error::Error::Tool("usage: /bench <safety|router>".into()));
                 }
-                self.run_tool("bench", serde_json::json!({"target": arg})).await
+                Ok(("bench", serde_json::json!({"target": arg})))
             }
             _ => Err(crate::error::Error::Tool(format!("unknown tool command: {cmd_id}"))),
         }
@@ -449,7 +693,8 @@ impl Agent {
              /tools             — List available tools\n  \
              /clear             — Clear conversation history\n  \
              /model             — Show current model\n  \
-             /profile           — Show last turn timing\n\
+             /profile           — Show last turn timing\n  \
+             /tasks             — List background tasks\n\
              \nDirect tool commands:\n  \
              /time              — Current UTC time\n  \
              /calc <expr>       — Evaluate math expression\n  \
@@ -463,6 +708,8 @@ impl Agent {
              /cpu               — System info (CPU, memory, uptime)\n  \
              /tokens <text>     — Estimate token count\n  \
              /bench <target>    — Microbenchmark (safety/router)\n\
+             \nAppend & to run any tool in background (e.g. /shell sleep 5 &)\n\
+             Pipe tools with | (e.g. /shell ls | /tokens)\n\
              \nAgent: {} | Model: {}",
             self.config.agent_name, self.config.model
         )

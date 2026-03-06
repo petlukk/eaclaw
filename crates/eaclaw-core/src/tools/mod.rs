@@ -25,6 +25,23 @@ pub trait Tool: Send + Sync {
     fn parameters_schema(&self) -> serde_json::Value;
     async fn execute(&self, params: serde_json::Value) -> Result<String>;
 
+    /// Whether this tool supports streaming output.
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
+    /// Execute with streaming output via callback.
+    /// Default: calls execute() and sends result as one chunk.
+    async fn execute_stream(
+        &self,
+        params: serde_json::Value,
+        on_chunk: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> Result<()> {
+        let result = self.execute(params).await?;
+        on_chunk(&result);
+        Ok(())
+    }
+
     fn as_tool_def(&self) -> ToolDef {
         ToolDef {
             name: self.name().to_string(),

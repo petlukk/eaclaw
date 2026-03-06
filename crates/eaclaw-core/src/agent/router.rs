@@ -10,6 +10,7 @@ pub enum Command {
     Clear,
     Model,
     Profile,
+    Tasks,
     // Tool commands (with optional argument)
     Time,
     Calc(String),
@@ -44,6 +45,7 @@ pub fn parse_command(text: &str, prefix: &str) -> Command {
         command_router::CMD_CLEAR => Command::Clear,
         command_router::CMD_MODEL => Command::Model,
         command_router::CMD_PROFILE => Command::Profile,
+        command_router::CMD_TASKS => Command::Tasks,
         command_router::CMD_TIME => Command::Time,
         command_router::CMD_CALC => Command::Calc(arg_str()),
         command_router::CMD_HTTP => Command::Http(arg_str()),
@@ -156,6 +158,28 @@ mod tests {
             parse_command("/tokens hello", "/"),
             Command::Tokens("hello".to_string())
         );
+    }
+
+    #[test]
+    fn test_pipeline_detection() {
+        // A pipeline should still parse the first command
+        let text = "/shell ls | /tokens";
+        assert!(text.contains(" | /"));
+        // First segment routes correctly
+        let (id, _) = command_router::match_command_verified(b"/shell ls");
+        assert_eq!(id, command_router::CMD_SHELL);
+    }
+
+    #[test]
+    fn test_pipeline_second_stage() {
+        let (id, arg) = command_router::match_command_verified(b"/tokens");
+        assert_eq!(id, command_router::CMD_TOKENS);
+        assert!(arg.is_empty());
+    }
+
+    #[test]
+    fn test_parse_tasks() {
+        assert_eq!(parse_command("/tasks", "/"), Command::Tasks);
     }
 
     #[test]

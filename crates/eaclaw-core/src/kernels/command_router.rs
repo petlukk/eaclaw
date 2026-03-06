@@ -8,6 +8,7 @@ pub const CMD_TOOLS: i32 = 2;
 pub const CMD_CLEAR: i32 = 3;
 pub const CMD_MODEL: i32 = 4;
 pub const CMD_PROFILE: i32 = 5;
+pub const CMD_TASKS: i32 = 18;
 /// Tool commands:
 pub const CMD_TIME: i32 = 6;
 pub const CMD_CALC: i32 = 7;
@@ -120,6 +121,7 @@ pub fn command_name(id: i32) -> Option<&'static str> {
         CMD_CPU => Some("cpu"),
         CMD_TOKENS => Some("tokens"),
         CMD_BENCH => Some("bench"),
+        CMD_TASKS => Some("tasks"),
         _ => None,
     }
 }
@@ -243,6 +245,11 @@ mod tests {
     }
 
     // --- Two-stage verified match tests ---
+
+    #[test]
+    fn test_tasks() {
+        assert_eq!(match_command(b"/tasks"), CMD_TASKS);
+    }
 
     #[test]
     fn test_verified_time_no_arg() {

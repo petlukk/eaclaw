@@ -147,6 +147,12 @@ export func match_command(text: *u8, len: i32, out_match: *mut i32) {
                     out_match[0] = 17
                     return
                 }
+
+                // /task: t=116 a=97 s=115 k=107
+                if hash4 == 116 + 97 * 256 + 115 * 65536 + 107 * 16777216 {
+                    out_match[0] = 18
+                    return
+                }
             }
         }
     }
