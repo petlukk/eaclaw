@@ -4,17 +4,3 @@
 *.d
 perf.data
 perf.data.old
-# Generated FFI bindings (build.sh output)
-/byte_classifier.rs
-/command_router.rs
-/fused_safety.rs
-/json_scanner.rs
-/leak_scanner.rs
-/sanitizer.rs
-/search.rs
-# Plans and personal files
-PLAN.md
-v2_plan.md
-CLAUDE.md
-peter.txt
-eaclaw.txt
