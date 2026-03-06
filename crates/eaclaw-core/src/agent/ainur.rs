@@ -244,6 +244,10 @@ async fn run_worker(
     }
 }
 
+/// Max characters per worker result in the merge prompt.
+/// Keeps total merge input under ~8K tokens even with 10 workers.
+const MAX_WORKER_CHARS: usize = 2000;
+
 /// Merger: combine worker results into a cohesive response.
 async fn merge(
     results: &[(usize, String)],
@@ -253,11 +257,16 @@ async fn merge(
 ) -> Result<String> {
     let mut worker_text = String::new();
     for (i, (_, result)) in results.iter().enumerate() {
+        let trimmed = if result.len() > MAX_WORKER_CHARS {
+            format!("{}...(truncated)", &result[..MAX_WORKER_CHARS])
+        } else {
+            result.clone()
+        };
         worker_text.push_str(&format!(
             "## Worker {} — {}\n{}\n\n",
             i + 1,
             subtasks.get(i).map(|s| s.as_str()).unwrap_or(""),
-            result,
+            trimmed,
         ));
     }
 
@@ -270,7 +279,15 @@ async fn merge(
         ))],
     }];
 
-    let response = llm.chat(&messages, &[], MERGER_PROMPT).await?;
+    // Retry once on rate limit (workers may have exhausted the budget)
+    let response = match llm.chat(&messages, &[], MERGER_PROMPT).await {
+        Ok(r) => r,
+        Err(e) if e.to_string().contains("rate limit") => {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            llm.chat(&messages, &[], MERGER_PROMPT).await?
+        }
+        Err(e) => return Err(e),
+    };
 
     let text = response
         .content
