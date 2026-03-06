@@ -9,6 +9,11 @@ pub trait Channel: Send + Sync {
     async fn recv(&self) -> Option<String>;
     async fn send(&self, content: &str);
 
+    /// Prefix printed before the first chunk of a streamed response.
+    fn response_prefix(&self) -> &str {
+        ""
+    }
+
     /// Send a partial chunk of streaming output (no trailing newline).
     async fn send_chunk(&self, chunk: &str) {
         // Default: just print inline

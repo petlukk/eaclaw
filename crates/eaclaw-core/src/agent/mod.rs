@@ -305,12 +305,11 @@ impl Agent {
 
                 let response = {
                     let streamed_flag = &mut streamed_any_text;
+                    let prefix = channel.response_prefix();
                     let mut on_text = |chunk: &str| {
                         if !chunk.is_empty() {
                             if !*streamed_flag {
-                                // Leading newline to separate from prompt,
-                                // matching the \n prefix in channel.send().
-                                print!("\n");
+                                print!("\r\x1b[2K{prefix} ");
                             }
                             *streamed_flag = true;
                             print!("{chunk}");
@@ -582,7 +581,7 @@ impl Agent {
 
         // Stream chunks to channel
         if !chunks.is_empty() {
-            print!("\n");
+            print!("\r\x1b[2K{} ", channel.response_prefix());
             for chunk in &chunks {
                 channel.send_chunk(chunk).await;
             }

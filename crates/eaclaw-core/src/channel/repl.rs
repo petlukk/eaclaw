@@ -11,12 +11,15 @@ use tokio::sync::{mpsc, Mutex};
 pub struct ReplChannel {
     rx: Mutex<mpsc::Receiver<String>>,
     shutdown: Arc<AtomicBool>,
+    response_prefix: String,
 }
 
 impl ReplChannel {
     /// Create a new REPL channel. Spawns a blocking thread for readline.
     pub fn new(agent_name: &str) -> Self {
-        let prompt = format!("{agent_name}> ");
+        // Bold green "You>" prompt where the user types
+        let prompt = "\x1b[1;32mYou>\x1b[0m ".to_string();
+        let response_prefix = format!("\x1b[1;36m{agent_name}>\x1b[0m");
         let (tx, rx) = mpsc::channel(1);
         let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -63,6 +66,7 @@ impl ReplChannel {
         Self {
             rx: Mutex::new(rx),
             shutdown,
+            response_prefix,
         }
     }
 
@@ -91,13 +95,19 @@ impl Channel for ReplChannel {
         "repl"
     }
 
+    fn response_prefix(&self) -> &str {
+        &self.response_prefix
+    }
+
     async fn recv(&self) -> Option<String> {
         let mut rx = self.rx.lock().await;
         rx.recv().await
     }
 
     async fn send(&self, content: &str) {
-        println!("\n{content}\n");
+        // \r + clear-line to overwrite the You> prompt that rustyline already drew
+        print!("\r\x1b[2K");
+        println!("{} {content}\n", self.response_prefix);
     }
 
     async fn send_chunk(&self, chunk: &str) {
