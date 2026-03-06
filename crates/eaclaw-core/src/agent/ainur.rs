@@ -80,7 +80,8 @@ pub async fn execute(
         on_status(&format!("♪ Ainur {}/{count}: {sub}", i + 1));
     }
 
-    // 2. Execute workers in parallel
+    // 2. Execute workers with staggered starts (avoid rate limit bursts)
+    let stagger_ms = 2000; // 2s between worker starts
     let worker_futures: Vec<_> = subtasks
         .iter()
         .enumerate()
@@ -90,8 +91,12 @@ pub async fn execute(
             let system = system_prompt.to_string();
             let subtask = subtask.clone();
             let tools = tools.clone();
+            let delay = i as u64 * stagger_ms;
 
             tokio::spawn(async move {
+                if delay > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+                }
                 let result = run_worker(
                     &llm,
                     &subtask,
@@ -279,12 +284,20 @@ async fn merge(
         ))],
     }];
 
-    // Retry once on rate limit (workers may have exhausted the budget)
+    // Retry on rate limit — workers may have exhausted the per-minute budget.
+    // Wait up to 60s total (two retries at 15s and 30s).
     let response = match llm.chat(&messages, &[], MERGER_PROMPT).await {
         Ok(r) => r,
         Err(e) if e.to_string().contains("rate limit") => {
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            llm.chat(&messages, &[], MERGER_PROMPT).await?
+            tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+            match llm.chat(&messages, &[], MERGER_PROMPT).await {
+                Ok(r) => r,
+                Err(e) if e.to_string().contains("rate limit") => {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                    llm.chat(&messages, &[], MERGER_PROMPT).await?
+                }
+                Err(e) => return Err(e),
+            }
         }
         Err(e) => return Err(e),
     };
