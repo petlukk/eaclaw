@@ -1,0 +1,22 @@
+{
+  "library": "target/kernels/libjson_scanner.so",
+  "exports": [
+    {
+      "name": "count_json_structural",
+      "args": [{"name": "text", "type": "*u8", "direction": "in", "cap": null, "count": null}, {"name": "len", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "out_count", "type": "*mut i32", "direction": "in", "cap": null, "count": null}],
+      "return_type": null
+    },
+    {
+      "name": "extract_json_structural",
+      "args": [{"name": "text", "type": "*u8", "direction": "in", "cap": null, "count": null}, {"name": "len", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "out_pos", "type": "*mut i32", "direction": "in", "cap": null, "count": null}, {"name": "out_types", "type": "*mut u8", "direction": "in", "cap": null, "count": null}, {"name": "out_count", "type": "*mut i32", "direction": "in", "cap": null, "count": null}],
+      "return_type": null
+    },
+    {
+      "name": "extract_json_structural",
+      "args": [{"name": "text", "type": "*u8", "direction": "in", "cap": null, "count": null}, {"name": "len", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "out_pos", "type": "*mut i32", "direction": "in", "cap": null, "count": null}, {"name": "out_types", "type": "*mut u8", "direction": "in", "cap": null, "count": null}, {"name": "out_count", "type": "*mut i32", "direction": "in", "cap": null, "count": null}],
+      "return_type": null
+    }
+  ],
+  "structs": [
+  ]
+}

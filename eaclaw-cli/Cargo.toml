@@ -1,0 +1,11 @@
+[package]
+name = "eaclaw-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eaclaw-core.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,0 +1,14 @@
+/target
+*.so
+*.o
+*.d
+perf.data
+perf.data.old
+# Generated FFI bindings (build.sh output)
+/byte_classifier.rs
+/command_router.rs
+/fused_safety.rs
+/json_scanner.rs
+/leak_scanner.rs
+/sanitizer.rs
+/search.rs

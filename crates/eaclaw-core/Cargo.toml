@@ -1,0 +1,28 @@
+[package]
+name = "eaclaw-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+futures.workspace = true
+rustyline = "15"
+chrono = "0.4"
+libc = "0.2"
+
+[dev-dependencies]
+aho-corasick = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "safety_bench"
+harness = false
+path = "../../benches/safety_bench.rs"
