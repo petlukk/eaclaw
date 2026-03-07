@@ -4,6 +4,8 @@ A high-performance AI assistant powered by SIMD kernels written in [Eä](https:/
 
 **Every kernel fits in L1 cache.** The entire hot path — safety scanning, command routing, conversation recall — runs at memory bandwidth with zero allocations on the fast path.
 
+> **Warning:** eaclaw is **not sandboxed**. The agent can execute shell commands, read/write files, and make HTTP requests with the full permissions of the user running it. The SIMD safety layer scans for prompt injection and secret leaks, but it is not a security boundary. Do not run eaclaw on systems with sensitive data unless you understand the risks. Use endpoint allowlisting (`~/.eaclaw/allowed_hosts.txt`) and review the tools available before use.
+
 ## Install
 
 Download the latest binary for your platform from [Releases](https://github.com/petlukk/eaclaw/releases):
