@@ -52,13 +52,26 @@ The binary is self-contained — SIMD kernels are embedded and auto-extracted on
 
 ## Building from Source
 
-Requires the [Eä compiler](https://github.com/petlukk/eacompute) and a Rust toolchain. Go is required for the WhatsApp bridge.
+### Dependencies
+
+| Dependency | Version | Purpose |
+|------------|---------|---------|
+| [Eä compiler](https://github.com/petlukk/eacompute) | v1.6.0+ | Compiles `.ea` kernels to `.so` |
+| Rust | 1.85+ (edition 2024) | Builds the main binary |
+| LLVM | 18 | Required by the Eä compiler |
+| Go | 1.25+ | Builds the WhatsApp bridge (optional) |
+| OpenSSL dev | any | Required by reqwest (`libssl-dev` on Ubuntu) |
+
+### Build
 
 ```bash
-./build.sh      # Compile .ea kernels → .so + build WhatsApp bridge
-cargo build     # Build the binary (embeds kernels)
-cargo test      # Run tests (230 tests, no LD_LIBRARY_PATH needed)
-cargo bench     # Run benchmarks
+# Set the Eä compiler path (download from eacompute releases or build from source)
+export EA=/path/to/ea
+
+./build.sh              # Compile .ea kernels → .so + build WhatsApp bridge
+cargo build --release   # Build the binary (embeds kernels)
+cargo test              # Run tests (230 tests, no LD_LIBRARY_PATH needed)
+cargo bench             # Run benchmarks
 ```
 
 ## Modes

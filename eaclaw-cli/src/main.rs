@@ -15,6 +15,29 @@ async fn main() {
         )
         .init();
 
+    // Handle --version and --help before requiring config
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("eaclaw-cli {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("eaclaw-cli {} — Cache-Resident SIMD Agent Framework", env!("CARGO_PKG_VERSION"));
+        println!();
+        println!("Usage: eaclaw-cli [OPTIONS]");
+        println!();
+        println!("Options:");
+        println!("  --whatsapp    Run in WhatsApp bridge mode");
+        println!("  --version     Print version");
+        println!("  --help        Print this help");
+        println!();
+        println!("Environment:");
+        println!("  ANTHROPIC_API_KEY    Anthropic API key (required)");
+        println!("  ANTHROPIC_MODEL      Model to use (default: claude-sonnet-4-20250514)");
+        println!("  AGENT_NAME           Agent name and trigger word (default: eaclaw)");
+        std::process::exit(0);
+    }
+
     if let Err(e) = eaclaw_core::kernels::init() {
         eprintln!("Failed to initialize SIMD kernels: {e}");
         std::process::exit(1);
@@ -29,8 +52,6 @@ async fn main() {
         }
     };
 
-    // Check for --whatsapp mode
-    let args: Vec<String> = std::env::args().collect();
     let whatsapp_mode = args.iter().any(|a| a == "--whatsapp");
 
     if whatsapp_mode {
