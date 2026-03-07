@@ -19,7 +19,9 @@ impl Config {
     /// Load configuration from environment variables.
     pub fn from_env() -> Result<Self> {
         let api_key = env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| Error::Config("ANTHROPIC_API_KEY not set".into()))?;
+            .map_err(|_| Error::Config("ANTHROPIC_API_KEY not set".into()))?
+            .trim()
+            .to_string();
 
         let model = env::var("ANTHROPIC_MODEL")
             .unwrap_or_else(|_| "claude-sonnet-4-20250514".into());

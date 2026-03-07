@@ -8,7 +8,7 @@ pub enum Error {
     #[error("LLM error: {0}")]
     Llm(String),
 
-    #[error("tool error: {0}")]
+    #[error("{0}")]
     Tool(String),
 
     #[error("safety violation: {0}")]
@@ -17,7 +17,7 @@ pub enum Error {
     #[error("channel error: {0}")]
     Channel(String),
 
-    #[error("HTTP error: {0}")]
+    #[error("HTTP error: {}", display_reqwest_error(.0))]
     Http(#[from] reqwest::Error),
 
     #[error("JSON error: {0}")]
@@ -28,3 +28,15 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+fn display_reqwest_error(e: &reqwest::Error) -> String {
+    if e.is_builder() {
+        format!("{e} (hint: check ANTHROPIC_API_KEY for invalid characters)")
+    } else if e.is_timeout() {
+        format!("request timed out: {e}")
+    } else if e.is_connect() {
+        format!("connection failed: {e}")
+    } else {
+        e.to_string()
+    }
+}
