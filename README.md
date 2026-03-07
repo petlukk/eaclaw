@@ -4,20 +4,37 @@ A high-performance AI assistant powered by SIMD kernels written in [Eä](https:/
 
 **Every kernel fits in L1 cache.** The entire hot path — safety scanning, command routing, conversation recall — runs at memory bandwidth with zero allocations on the fast path.
 
+## Install
+
+Download the latest binary for your platform from [Releases](https://github.com/petlukk/eaclaw/releases):
+
+```bash
+curl -LO https://github.com/petlukk/eaclaw/releases/latest/download/eaclaw-v0.1.1-linux-x86_64.tar.gz
+tar xzf eaclaw-v0.1.1-linux-x86_64.tar.gz
+chmod +x eaclaw-cli eaclaw-bridge
+```
+
+The archive contains two binaries:
+
+| Binary | Description |
+|--------|-------------|
+| `eaclaw-cli` | Main agent (REPL + WhatsApp mode) |
+| `eaclaw-bridge` | WhatsApp bridge (only needed for `--whatsapp` mode) |
+
 ## Quick Start
 
 ### REPL Mode
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-./eaclaw
+./eaclaw-cli
 ```
 
 ### WhatsApp Mode
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-./eaclaw --whatsapp
+./eaclaw-cli --whatsapp
 ```
 
 On first run, scan the QR code with WhatsApp ("Link a device"). Then mention `@eaclaw` in any chat to trigger it:
@@ -48,8 +65,8 @@ cargo bench     # Run benchmarks
 
 | Mode | Command | Description |
 |------|---------|-------------|
-| **REPL** | `./eaclaw` | Interactive terminal session with `You>` / `eaclaw>` prompts |
-| **WhatsApp** | `./eaclaw --whatsapp` | WhatsApp bridge — respond to `@eaclaw` mentions in any chat |
+| **REPL** | `./eaclaw-cli` | Interactive terminal session with `You>` / `eaclaw>` prompts |
+| **WhatsApp** | `./eaclaw-cli --whatsapp` | WhatsApp bridge — respond to `@eaclaw` mentions in any chat |
 
 ## Commands
 
