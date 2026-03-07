@@ -32,7 +32,11 @@ impl Tool for DefineTool {
             .ok_or_else(|| crate::error::Error::Tool("missing 'word' parameter".into()))?;
 
         let url = format!("https://api.dictionaryapi.dev/api/v2/entries/en/{word}");
-        let resp = reqwest::get(&url).await?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| crate::error::Error::Tool(format!("http client error: {e}")))?;
+        let resp = client.get(&url).send().await?;
 
         if !resp.status().is_success() {
             return Err(crate::error::Error::Tool(format!("no definition found for: {word}")));

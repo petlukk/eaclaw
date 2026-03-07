@@ -32,7 +32,11 @@ impl Tool for WeatherTool {
             .ok_or_else(|| crate::error::Error::Tool("missing 'city' parameter".into()))?;
 
         let url = format!("https://wttr.in/{}?format=%l:+%C+%t+%h+%w", urlencode(city));
-        let body = reqwest::get(&url).await?.text().await?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| crate::error::Error::Tool(format!("http client error: {e}")))?;
+        let body = client.get(&url).send().await?.text().await?;
         let body = body.trim();
 
         if body.contains("Unknown location") || body.contains("ERROR") {

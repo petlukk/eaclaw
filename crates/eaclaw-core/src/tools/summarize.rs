@@ -44,7 +44,11 @@ impl Tool for SummarizeTool {
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'url' parameter".into()))?;
 
-        let body = reqwest::get(url).await?.text().await?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| crate::error::Error::Tool(format!("http client error: {e}")))?;
+        let body = client.get(url).send().await?.text().await?;
 
         // Strip HTML tags (cheap, no regex)
         let text = strip_tags(&body);

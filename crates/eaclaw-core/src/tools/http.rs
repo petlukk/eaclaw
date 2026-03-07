@@ -1,6 +1,9 @@
 use super::Tool;
 use async_trait::async_trait;
 use futures::StreamExt;
+use std::time::Duration;
+
+const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct HttpTool {
     /// Allowed hosts. Empty = allow all.
@@ -66,7 +69,11 @@ impl Tool for HttpTool {
             .ok_or_else(|| crate::error::Error::Tool("missing 'url' parameter".into()))?;
 
         self.check_host(url)?;
-        let response = reqwest::get(url).await?;
+        let client = reqwest::Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .build()
+            .map_err(|e| crate::error::Error::Tool(format!("http client error: {e}")))?;
+        let response = client.get(url).send().await?;
         let status = response.status();
         let body = response.text().await?;
 
@@ -95,7 +102,11 @@ impl Tool for HttpTool {
             .ok_or_else(|| crate::error::Error::Tool("missing 'url' parameter".into()))?;
 
         self.check_host(url)?;
-        let response = reqwest::get(url).await?;
+        let client = reqwest::Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .build()
+            .map_err(|e| crate::error::Error::Tool(format!("http client error: {e}")))?;
+        let response = client.get(url).send().await?;
         let status = response.status();
         on_chunk(&format!("HTTP {status}\n"));
 
