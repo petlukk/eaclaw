@@ -166,11 +166,11 @@ impl LlmProvider for LocalLlmProvider {
         let new_tokens = inner.engine.tokenize(&formatted, true);
         let prefix_len = common_prefix_len(&inner.prefilled_tokens, &new_tokens);
 
-        // If prefix diverges, truncate both llama.cpp and eakv KV caches
+        // If prefix diverges, truncate llama.cpp KV cache (and eakv if synced)
         if prefix_len < inner.prefilled_tokens.len() {
             inner.engine.kv_cache_truncate(prefix_len as i32);
-            inner.kv_cache.restore(prefix_len as i32)
-                .map_err(|e| crate::error::Error::Llm(e))?;
+            // eakv restore is best-effort — the bridge format may not be active yet
+            let _ = inner.kv_cache.restore(prefix_len as i32);
             inner.eakv_seq_len = prefix_len as i32;
         }
 
@@ -180,17 +180,19 @@ impl LlmProvider for LocalLlmProvider {
             inner.engine.decode(suffix, prefix_len as i32)
                 .map_err(|e| crate::error::Error::Llm(e))?;
 
-            // Export KV state from llama.cpp -> eakv (Approach A)
+            // Export KV state from llama.cpp -> eakv (Approach A, best-effort)
             let kv_state = inner.engine.export_kv_state();
             let seq_len = inner.eakv_seq_len;
-            inner.kv_cache.import_llama_state(&kv_state, seq_len)
-                .map_err(|e| crate::error::Error::Llm(e))?;
-            inner.eakv_seq_len = inner.kv_cache.seq_len();
+            if let Err(e) = inner.kv_cache.import_llama_state(&kv_state, seq_len) {
+                tracing::debug!("eakv KV import skipped: {e}");
+            } else {
+                inner.eakv_seq_len = inner.kv_cache.seq_len();
+            }
         }
 
         inner.prefilled_tokens = new_tokens.clone();
 
-        // Checkpoint eakv before generation (O(1) — just saves seq_len)
+        // Checkpoint eakv before generation (best-effort)
         let _checkpoint = inner.kv_cache.checkpoint();
 
         // Generation loop
