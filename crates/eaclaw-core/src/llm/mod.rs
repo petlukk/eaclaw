@@ -3,6 +3,8 @@ pub mod local;
 pub mod tool_parse;
 #[cfg(feature = "local-llm")]
 pub mod llama_ffi;
+#[cfg(feature = "local-llm")]
+pub mod eakv_ffi;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
