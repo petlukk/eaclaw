@@ -18,7 +18,7 @@
 ```bash
 ./build.sh              # Compile .ea → .so + build WhatsApp bridge (if Go available)
 cargo build             # Build single binary with embedded SIMD kernels
-cargo test              # Run all 222 tests (no LD_LIBRARY_PATH needed)
+cargo test              # Run all 230 tests (no LD_LIBRARY_PATH needed)
 cargo bench             # Run benchmarks
 cargo run               # Start REPL (requires ANTHROPIC_API_KEY)
 cargo run -- --whatsapp # Start WhatsApp mode (scan QR, respond to @eaclaw)
@@ -36,6 +36,24 @@ to `~/.eaclaw/lib/v{VERSION}/` on first run. No `LD_LIBRARY_PATH` needed.
 - `COMMAND_PREFIX` — Default: `/`
 - `EACLAW_BRIDGE_PATH` — WhatsApp bridge binary (auto-detected)
 - `EACLAW_WA_SESSION_DIR` — WhatsApp session data (default: `~/.eaclaw/whatsapp`)
+- `EACLAW_BACKEND` — `anthropic` (default) or `local`
+- `EACLAW_MODEL_PATH` — GGUF model file (default: `~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf`)
+- `EACLAW_CTX_SIZE` — Context window size (default: `4096`)
+- `EACLAW_THREADS` — Inference threads (default: CPU count)
+
+## Local Inference (optional)
+
+Build with `cargo build --features local-llm` to enable embedded llama.cpp + eakv inference.
+
+Download a GGUF model:
+```bash
+mkdir -p ~/.eaclaw/models
+# Qwen2.5-3B-Instruct Q4_K_M (~1.8GB)
+wget -O ~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
+```
+
+Set `EACLAW_BACKEND=local` to use local inference instead of Anthropic API.
 
 ## Conventions
 
@@ -55,7 +73,7 @@ to `~/.eaclaw/lib/v{VERSION}/` on first run. No `LD_LIBRARY_PATH` needed.
 | json_scanner | `count_json_structural`, `extract_json_structural` | JSON structure finding |
 | leak_scanner | `scan_leak_prefixes` | Secret pattern prefix filter |
 | sanitizer | `scan_injection_prefixes` | Injection pattern prefix filter |
-| command_router | `match_command` | Slash command hash matching |
+| command_router | `match_command` | Slash command hash matching (24 commands) |
 
 ## Safety Pipeline
 
