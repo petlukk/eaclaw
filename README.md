@@ -1,22 +1,29 @@
 # eaclaw
 
-A high-performance AI assistant powered by SIMD kernels written in [Eä](https://github.com/petlukk/eacompute) and Rust. Uses the Anthropic Claude API for conversation, with embedded SIMD acceleration for safety scanning, command routing, and conversation recall.
+A high-performance AI assistant powered by SIMD kernels written in [Eä](https://github.com/petlukk/eacompute) and Rust. Uses the Anthropic Claude API or local LLM inference (llama.cpp + eakv) for conversation, with embedded SIMD acceleration for safety scanning, command routing, and conversation recall.
 
 **Every kernel fits in L1 cache.** The entire hot path — safety scanning, command routing, conversation recall — runs at memory bandwidth with zero allocations on the fast path.
 
 ## Quick Start
 
-### REPL Mode
+### Cloud Mode (Anthropic API)
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 ./eaclaw
 ```
 
+### Local Mode (no API key needed)
+
+```bash
+export EACLAW_BACKEND=local
+./eaclaw
+```
+
 ### WhatsApp Mode
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_KEY=sk-ant-...  # or EACLAW_BACKEND=local
 ./eaclaw --whatsapp
 ```
 
@@ -43,6 +50,24 @@ cargo build     # Build the binary (embeds kernels)
 cargo test      # Run tests (230 tests, no LD_LIBRARY_PATH needed)
 cargo bench     # Run benchmarks
 ```
+
+### Local Inference (optional)
+
+Build with llama.cpp + eakv support for fully offline operation:
+
+```bash
+cargo build --features local-llm
+```
+
+Download a model (~1.8 GB):
+
+```bash
+mkdir -p ~/.eaclaw/models
+wget -O ~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
+```
+
+Run with `EACLAW_BACKEND=local`. Works in both REPL and WhatsApp modes. No API key required.
 
 ## Modes
 
@@ -147,8 +172,12 @@ The trigger name matches `AGENT_NAME` (case-insensitive).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | *(required)* | Anthropic API key |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model to use |
+| `ANTHROPIC_API_KEY` | *(required for cloud)* | Anthropic API key |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model to use (cloud mode) |
+| `EACLAW_BACKEND` | `anthropic` | `anthropic` (cloud) or `local` (llama.cpp) |
+| `EACLAW_MODEL_PATH` | `~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf` | GGUF model file (local mode) |
+| `EACLAW_CTX_SIZE` | `4096` | Context window size (local mode) |
+| `EACLAW_THREADS` | CPU count | Inference threads (local mode) |
 | `AGENT_NAME` | `eaclaw` | Agent display name and trigger word |
 | `MAX_TURNS` | `10` | Max tool-use turns per conversation message |
 | `COMMAND_PREFIX` | `/` | Prefix for slash commands |
@@ -193,6 +222,18 @@ All kernels use `u8x16` SIMD (SSE2), keeping instruction footprint small:
 | `search` | 23 KB | L2 (multi-function) |
 
 The safety scan adds **~2 µs** of latency to every message — invisible next to the LLM round-trip.
+
+### Local Inference (Qwen2.5-3B Q4_K_M, 2 CPUs)
+
+| Metric | eaclaw | llama.cpp standalone |
+|--------|--------|---------------------|
+| Model load | **2.7s** | 3.7s |
+| Generation (first message) | 3.1 tok/s | 12.7 tok/s |
+| Generation (KV reuse) | **4.0 tok/s** | N/A (restarts each time) |
+| Tool-call detection | 5.9s | N/A |
+| Peak memory (ctx=4096) | 3,576 MB | 3,561 MB |
+
+eaclaw loads 1.4x faster and gets free multi-turn KV cache reuse (29% speedup on follow-ups). Token generation is slower due to per-token FFI overhead — the main optimization target. Memory usage is identical.
 
 ## Architecture
 
