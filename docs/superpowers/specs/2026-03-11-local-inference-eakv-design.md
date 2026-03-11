@@ -253,8 +253,20 @@ if ring_buffer.ends_with(&open_pattern) {
 }
 ```
 
-This is a `memcmp` of ~3-5 integers per token — a few CPU cycles vs hundreds for
-string append + regex + JSON parse. ~50-100x faster than text-level detection.
+**Fast-path optimization:** Before the full `memcmp`, check only the last token
+against the pattern's final token. This is a single integer comparison that
+short-circuits ~99% of tokens:
+
+```rust
+if last_token == open_pattern.last()
+    && ring_buffer.ends_with(&open_pattern)
+{
+    state = ToolCallCapture;
+}
+```
+
+Full `memcmp` of ~3-5 integers only runs when the sentinel matches — making
+detection effectively free per token.
 
 #### Three states during generation
 
@@ -289,6 +301,22 @@ batch/multi-stream scenarios where many tool calls are parsed concurrently.
 - Pattern matching cost is constant regardless of context length
 - Naturally extends to detecting other patterns (e.g., `<think>`, `<code>`)
   by adding more patterns to the match set
+
+#### Edge cases
+
+**Nested tags:** If the model produces `<tool_call>` inside an already-open capture,
+reject it — do not stack-parse. Treat the inner tag as literal text in the JSON body.
+Nesting is not a valid tool-call format.
+
+**Runaway capture:** If `ToolCallCapture` accumulates more than 512 tokens without
+seeing `close_pattern`, abort capture. Detokenize what was buffered, treat it as
+regular text output (flush to `on_text`), and return to `Normal` state. This prevents
+a malformed model output from silently swallowing the rest of generation.
+
+**Token sequence stability:** The exact tokenization of `<tool_call>` depends on the
+model's vocabulary. Tokenizing at init via `llama_tokenize` guarantees the pattern
+matches the model's actual token sequence, regardless of how the tokenizer splits it
+(`["<tool", "_call", ">"]` vs `["<", "tool", "_call", ">"]` etc.).
 
 This works with Qwen, Llama, Mistral — all produce similar token sequences for
 XML-delimited tags. The system prompt instructs the model to use this exact format.
