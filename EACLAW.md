@@ -116,7 +116,11 @@ eaclaw/
 │       │   └── wa_loop.rs            #   WhatsApp agent loop (gateway → LLM → respond)
 │       ├── llm/
 │       │   ├── mod.rs                #   Message, ContentBlock, LlmProvider trait
-│       │   └── anthropic.rs          #   Anthropic API + SSE streaming parser
+│       │   ├── anthropic.rs          #   Anthropic API + SSE streaming parser
+│       │   ├── local.rs              #   LocalLlmProvider (llama.cpp + eakv bridge)
+│       │   ├── llama_ffi.rs          #   llama.cpp FFI bindings + LlamaEngine wrapper
+│       │   ├── eakv_ffi.rs           #   eakv FFI bindings + EakvCache wrapper
+│       │   └── tool_parse.rs         #   Token-level tool-call detection
 │       ├── safety/
 │       │   ├── mod.rs                #   SafetyLayer (fused SIMD + verify)
 │       │   ├── sanitizer.rs          #   Injection pattern verification (24 patterns)
@@ -277,6 +281,50 @@ All conversation turns (user + assistant) are indexed. Zero API calls. Measured 
 
 ---
 
+## Local Inference (llama.cpp + eakv)
+
+When built with `--features local-llm`, eaclaw can run fully offline using llama.cpp for inference and eakv for Q4 KV cache compression. The `LocalLlmProvider` wraps the stateless `LlmProvider` trait into a stateful engine with incremental KV cache reuse.
+
+```
+Qwen2.5-3B Q4_K_M (.gguf, 1.95 GiB)
+    │
+    ▼
+LlamaEngine (FFI)              EakvCache (FFI)
+├── tokenize                    ├── checkpoint/restore
+├── decode (batch chunked)      ├── import_llama_state
+├── sample                      └── seq_len tracking
+├── kv_cache_truncate
+└── export_kv_state ──────────► (best-effort sync)
+    │
+    ▼
+LocalLlmProvider
+├── format_chat_template (Qwen2.5 <|im_start|> format)
+├── common_prefix_len → incremental prefill
+├── ToolCallDetector (token-level <tool_call> tags)
+└── fallback: raw JSON → ToolUse parsing
+```
+
+**Key design decisions:**
+- Stateless-to-stateful bridge: `prefilled_tokens` vec tracks what's in the KV cache; new turns only decode the diff
+- Batch chunking: llama.cpp's `n_batch=512` limit requires splitting large prefills
+- eakv sync is best-effort (non-fatal) — llama.cpp's internal KV cache handles inference alone
+- Tool detection: token-level sentinel matching + fallback raw JSON parser (Qwen2.5-3B often skips `<tool_call>` tags)
+
+**Performance vs standalone llama.cpp (Qwen2.5-3B Q4_K_M, 2 CPUs, ctx=4096):**
+
+| Metric | eaclaw | llama.cpp standalone |
+|--------|--------|---------------------|
+| Model load | **2.7s** | 3.7s |
+| Prefill | ~14.7 tok/s | 22.3 tok/s |
+| Generation (cold) | 3.1 tok/s | 12.7 tok/s |
+| Generation (KV reuse) | **4.0 tok/s** | N/A |
+| Tool-call detection | 5.9s total | N/A |
+| Peak RSS | 3,576 MB | 3,561 MB |
+
+eaclaw loads 1.4x faster and gets free multi-turn KV cache reuse (29% speedup on follow-ups). Generation is 4x slower due to per-token FFI overhead — the main optimization target. Memory is identical (~3.5 GB).
+
+---
+
 ## Streaming SSE
 
 The Anthropic Messages API streams tokens via Server-Sent Events when `"stream": true` is set. Our SSE parser:
@@ -390,8 +438,12 @@ All 24 commands (8 meta + 16 tools) matched by the SIMD command router with two-
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | **required** | API authentication |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model to use |
+| `ANTHROPIC_API_KEY` | **required (cloud)** | API authentication |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model to use (cloud mode) |
+| `EACLAW_BACKEND` | `anthropic` | `anthropic` (cloud) or `local` (llama.cpp) |
+| `EACLAW_MODEL_PATH` | `~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf` | GGUF model file (local mode) |
+| `EACLAW_CTX_SIZE` | `4096` | Context window size (local mode) |
+| `EACLAW_THREADS` | CPU count | Inference threads (local mode) |
 | `AGENT_NAME` | `eaclaw` | Prompt prefix |
 | `MAX_TURNS` | `10` | Max tool loop iterations |
 | `COMMAND_PREFIX` | `/` | Slash command marker |
@@ -543,6 +595,25 @@ cargo run --release                 # Start REPL (requires ANTHROPIC_API_KEY)
 cargo run --release -- --whatsapp   # Start WhatsApp mode
 ```
 
+### Local Inference
+
+```bash
+# Build with llama.cpp + eakv support
+cargo build --release --features local-llm
+
+# Download Qwen2.5-3B-Instruct Q4_K_M (~1.8 GB)
+mkdir -p ~/.eaclaw/models
+wget -O ~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
+
+# Run (no API key needed)
+EACLAW_BACKEND=local cargo run --release --features local-llm
+EACLAW_BACKEND=local cargo run --release --features local-llm -- --whatsapp
+
+# Run benchmarks
+cargo test --features local-llm -p eaclaw-core --test local_llm_bench -- --nocapture
+```
+
 ---
 
 ## Design Decisions
@@ -584,6 +655,10 @@ cargo run --release -- --whatsapp   # Start WhatsApp mode
 - **tracing** — structured logging
 - **home** — home directory resolution
 - **libloading** — runtime shared library loading
+
+### Local inference (feature = "local-llm")
+- **llama.cpp** — vendored, statically linked (libllama, libggml, libggml-base, libggml-cpu)
+- **eakv** — Q4 KV cache compression with fused AVX-512 attention kernels
 
 ### Dev only
 - **criterion** — benchmarking
