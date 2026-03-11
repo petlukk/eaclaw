@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod tool_parse;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
