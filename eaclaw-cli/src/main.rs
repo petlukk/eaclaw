@@ -1,6 +1,6 @@
 use eaclaw_core::agent::Agent;
 use eaclaw_core::channel::repl::ReplChannel;
-use eaclaw_core::config::Config;
+use eaclaw_core::config::{Backend, Config};
 use eaclaw_core::llm::anthropic::AnthropicProvider;
 use eaclaw_core::safety::SafetyLayer;
 use eaclaw_core::tools::ToolRegistry;
@@ -61,9 +61,39 @@ async fn main() {
     }
 }
 
+fn build_llm(config: &Config) -> Arc<dyn eaclaw_core::llm::LlmProvider> {
+    match config.backend {
+        Backend::Anthropic => Arc::new(AnthropicProvider::new(config)),
+        #[cfg(feature = "local-llm")]
+        Backend::Local => {
+            let model_path = config.model_path.as_deref().unwrap_or_else(|| {
+                eprintln!("EACLAW_MODEL_PATH not set. Set it to a valid GGUF file.");
+                eprintln!("Download: https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF");
+                std::process::exit(1);
+            });
+            // Qwen2.5-3B: 36 layers, 2 KV heads, 128 head_dim
+            match eaclaw_core::llm::LocalLlmProvider::new(
+                model_path, config.ctx_size as u32, config.threads as u32,
+                36, 2, 128,
+            ) {
+                Ok(p) => Arc::new(p),
+                Err(e) => {
+                    eprintln!("Failed to load local model: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        #[cfg(not(feature = "local-llm"))]
+        Backend::Local => {
+            eprintln!("Local LLM backend requires the 'local-llm' feature.");
+            eprintln!("Rebuild with: cargo build --features local-llm");
+            std::process::exit(1);
+        }
+    }
+}
+
 async fn run_repl(config: &Config) {
-    let llm: Arc<dyn eaclaw_core::llm::LlmProvider> =
-        Arc::new(AnthropicProvider::new(config));
+    let llm = build_llm(config);
 
     let tools = ToolRegistry::with_defaults(config, llm.clone());
     let safety = SafetyLayer::new();
@@ -85,8 +115,7 @@ async fn run_repl(config: &Config) {
 }
 
 async fn run_whatsapp(config: &Config) {
-    let llm: Arc<dyn eaclaw_core::llm::LlmProvider> =
-        Arc::new(AnthropicProvider::new(config));
+    let llm = build_llm(config);
 
     let tools = ToolRegistry::with_defaults(config, llm.clone());
 
