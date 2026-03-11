@@ -309,19 +309,20 @@ LocalLlmProvider
 - Batch chunking: llama.cpp's `n_batch=512` limit requires splitting large prefills
 - eakv sync is best-effort (non-fatal) — llama.cpp's internal KV cache handles inference alone
 - Tool detection: token-level sentinel matching + fallback raw JSON parser (Qwen2.5-3B often skips `<tool_call>` tags)
+- Single-pass streaming: pre-built vocab lookup table (token ID → string) allows text conversion, streaming, and tool detection inside the C++ generation callback — no replay pass needed
+- C++ generation loop: decode+sample runs in a tight C++ loop, eliminating per-token Rust↔C FFI roundtrips
 
-**Performance vs standalone llama.cpp (Qwen2.5-3B Q4_K_M, 2 CPUs, ctx=4096):**
+**Performance vs standalone llama.cpp (Qwen2.5-3B Q4_K_M, 4 threads, ctx=4096):**
 
 | Metric | eaclaw | llama.cpp standalone |
 |--------|--------|---------------------|
-| Model load | **2.7s** | 3.7s |
-| Prefill | ~14.7 tok/s | 22.3 tok/s |
-| Generation (cold) | 3.1 tok/s | 12.7 tok/s |
-| Generation (KV reuse) | **4.0 tok/s** | N/A |
-| Tool-call detection | 5.9s total | N/A |
-| Peak RSS | 3,576 MB | 3,561 MB |
+| Model load | **2.5s** | 3.7s |
+| Decode (pure generation) | **9.5 tok/s** | 10.1 tok/s |
+| End-to-end (incl. prefill) | 4.2 tok/s | — |
+| Decode (KV reuse) | **9.0 tok/s** | N/A |
+| Tool-call round-trip | 5.4s | N/A |
 
-eaclaw loads 1.4x faster and gets free multi-turn KV cache reuse (29% speedup on follow-ups). Generation is 4x slower due to per-token FFI overhead — the main optimization target. Memory is identical (~3.5 GB).
+eaclaw reaches **94% of standalone llama.cpp** decode speed. The remaining ~6% gap is the per-token callback trampoline (C++ → Rust). Multi-turn conversations get free KV cache reuse via eakv checkpointing.
 
 ---
 

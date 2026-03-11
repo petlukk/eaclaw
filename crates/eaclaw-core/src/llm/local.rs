@@ -104,6 +104,9 @@ struct LocalLlmInner {
     open_pattern: Vec<i32>,
     close_pattern: Vec<i32>,
     eakv_seq_len: i32,
+    /// Pre-built token ID → string table. Allows text conversion inside the
+    /// generation callback without borrowing `engine`.
+    vocab_table: Vec<String>,
 }
 
 #[cfg(feature = "local-llm")]
@@ -118,6 +121,7 @@ impl LocalLlmProvider {
 
         let open_pattern = engine.tokenize("<tool_call>", false);
         let close_pattern = engine.tokenize("</tool_call>", false);
+        let vocab_table = engine.build_vocab_table();
 
         Ok(Self {
             inner: Mutex::new(LocalLlmInner {
@@ -128,6 +132,7 @@ impl LocalLlmProvider {
                 open_pattern,
                 close_pattern,
                 eakv_seq_len: 0,
+                vocab_table,
             }),
         })
     }
@@ -196,83 +201,90 @@ impl LlmProvider for LocalLlmProvider {
         let _checkpoint = inner.kv_cache.checkpoint();
 
         // Generation loop — runs in C++ for minimal per-token overhead.
-        // C++ handles decode+sample in a tight loop; Rust processes tokens after.
+        // Single-pass: streaming, tool detection, and content block building all
+        // happen inside the callback using the pre-built vocab_table, avoiding
+        // the previous replay pass entirely.
         let gen_pos = inner.prefilled_tokens.len() as i32;
         let max_gen = 2048i32;
 
-        // Tool-call detection state shared with the callback via raw pointer.
-        // The callback only touches detector state — engine is borrowed by C++.
         let mut detector = ToolCallDetector::new(
             inner.open_pattern.clone(),
             inner.close_pattern.clone(),
             512,
         );
-        let mut tool_detected = false;
-
-        let generated = inner.engine.generate_stream(gen_pos, max_gen, |token| {
-            let result = detector.feed(token);
-            if matches!(result, DetectResult::ToolCall(_)) {
-                tool_detected = true;
-                return true; // stop generation
-            }
-            false // continue
-        });
-
-        // Update prefilled_tokens with generated tokens
-        inner.prefilled_tokens.extend_from_slice(&generated);
-
-        // Now process all generated tokens through the detector for streaming
-        // and content block construction. Reset detector and replay.
-        let mut detector = ToolCallDetector::new(
-            inner.open_pattern.clone(),
-            inner.close_pattern.clone(),
-            512,
-        );
-        let mut content_blocks = Vec::new();
+        let mut content_blocks: Vec<ContentBlock> = Vec::new();
         let mut text_buf = String::new();
         let mut stop_reason = StopReason::EndTurn;
+        let mut tool_call_body: Option<Vec<i32>> = None;
+        // Take vocab_table out of inner to avoid borrow conflict with engine.
+        // It's put back after generate_stream returns.
+        let vocab_table = std::mem::take(&mut inner.vocab_table);
 
-        for &token in &generated {
+        let result = inner.engine.generate_stream_timed(gen_pos, max_gen, |token| {
             match detector.feed(token) {
                 DetectResult::Text(t) => {
-                    let piece = inner.engine.token_to_str(t);
-                    text_buf.push_str(&piece);
-                    on_text(&piece);
+                    if let Some(piece) = vocab_table.get(t as usize) {
+                        text_buf.push_str(piece);
+                        on_text(piece);
+                    }
                 }
                 DetectResult::TagOpen | DetectResult::Captured => {
                     // Suppressed from output
                 }
                 DetectResult::ToolCall(body_tokens) => {
-                    if !text_buf.is_empty() {
-                        content_blocks.push(ContentBlock::Text {
-                            text: std::mem::take(&mut text_buf),
-                        });
-                    }
-
-                    let json_str = inner.engine.detokenize(&body_tokens);
-                    match serde_json::from_str::<serde_json::Value>(&json_str) {
-                        Ok(val) => {
-                            let name = val["name"].as_str().unwrap_or("").to_string();
-                            let arguments = val["arguments"].clone();
-                            let id = Self::generate_tool_id(&mut inner);
-                            content_blocks.push(ContentBlock::ToolUse {
-                                id,
-                                name,
-                                input: arguments,
-                            });
-                            stop_reason = StopReason::ToolUse;
-                        }
-                        Err(_e) => {
-                            text_buf.push_str(&format!("<tool_call>{json_str}</tool_call>"));
-                            on_text(&format!("<tool_call>{json_str}</tool_call>"));
-                        }
-                    }
-                    break;
+                    tool_call_body = Some(body_tokens);
+                    return true; // stop generation
                 }
                 DetectResult::Aborted(tokens) => {
-                    let text = inner.engine.detokenize(&tokens);
+                    let text: String = tokens.iter()
+                        .filter_map(|&t| vocab_table.get(t as usize))
+                        .cloned()
+                        .collect();
                     text_buf.push_str(&text);
                     on_text(&text);
+                }
+            }
+            false // continue
+        });
+        let generated = result.tokens;
+        let n_gen = generated.len();
+        if n_gen > 0 && result.decode_ms > 0.0 {
+            let tps = n_gen as f64 / (result.decode_ms / 1000.0);
+            eprintln!("eaclaw decode: {n_gen} tokens in {:.1} ms ({tps:.1} tok/s)", result.decode_ms);
+        }
+
+        // Update prefilled_tokens with generated tokens
+        inner.prefilled_tokens.extend_from_slice(&generated);
+        // Restore vocab_table into inner
+        inner.vocab_table = vocab_table;
+
+        // Process tool call if detected
+        if let Some(body_tokens) = tool_call_body {
+            if !text_buf.is_empty() {
+                content_blocks.push(ContentBlock::Text {
+                    text: std::mem::take(&mut text_buf),
+                });
+            }
+
+            let json_str: String = body_tokens.iter()
+                .filter_map(|&t| inner.vocab_table.get(t as usize))
+                .cloned()
+                .collect();
+            match serde_json::from_str::<serde_json::Value>(&json_str) {
+                Ok(val) => {
+                    let name = val["name"].as_str().unwrap_or("").to_string();
+                    let arguments = val["arguments"].clone();
+                    let id = Self::generate_tool_id(&mut inner);
+                    content_blocks.push(ContentBlock::ToolUse {
+                        id,
+                        name,
+                        input: arguments,
+                    });
+                    stop_reason = StopReason::ToolUse;
+                }
+                Err(_e) => {
+                    text_buf.push_str(&format!("<tool_call>{json_str}</tool_call>"));
+                    on_text(&format!("<tool_call>{json_str}</tool_call>"));
                 }
             }
         }

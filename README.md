@@ -223,17 +223,17 @@ All kernels use `u8x16` SIMD (SSE2), keeping instruction footprint small:
 
 The safety scan adds **~2 µs** of latency to every message — invisible next to the LLM round-trip.
 
-### Local Inference (Qwen2.5-3B Q4_K_M, 2 CPUs)
+### Local Inference (Qwen2.5-3B Q4_K_M, 4 threads)
 
 | Metric | eaclaw | llama.cpp standalone |
 |--------|--------|---------------------|
-| Model load | **2.7s** | 3.7s |
-| Generation (first message) | 3.1 tok/s | 12.7 tok/s |
-| Generation (KV reuse) | **4.0 tok/s** | N/A (restarts each time) |
-| Tool-call detection | 5.9s | N/A |
-| Peak memory (ctx=4096) | 3,576 MB | 3,561 MB |
+| Model load | **2.5s** | 3.7s |
+| Decode (pure generation) | **9.5 tok/s** | 10.1 tok/s |
+| End-to-end (incl. prefill) | 4.2 tok/s | — |
+| Generation (KV reuse) | **9.0 tok/s** decode | N/A (restarts each time) |
+| Tool-call round-trip | 5.4s | N/A |
 
-eaclaw loads 1.4x faster and gets free multi-turn KV cache reuse (29% speedup on follow-ups). Token generation is slower due to per-token FFI overhead — the main optimization target. Memory usage is identical.
+eaclaw reaches **94% of standalone llama.cpp** decode speed. The generation loop runs in C++ with a pre-built vocab lookup table for single-pass streaming and tool detection — no replay pass or per-token string conversion through the FFI boundary. Multi-turn conversations get free KV cache reuse via eakv checkpointing.
 
 ## Architecture
 

@@ -287,6 +287,12 @@ pub struct LlamaEngine {
 // ensuring single-threaded access to the raw pointers.
 unsafe impl Send for LlamaEngine {}
 
+/// Result from `LlamaEngine::generate_stream_timed`, including timing data.
+pub struct GenerateResult {
+    pub tokens: Vec<llama_token>,
+    pub decode_ms: f64,
+}
+
 impl LlamaEngine {
     /// Load model and create context.
     pub fn new(model_path: &str, n_ctx: u32, n_threads: u32) -> Result<Self, String> {
@@ -388,6 +394,18 @@ impl LlamaEngine {
         tokens.iter().map(|&t| self.token_to_str(t)).collect()
     }
 
+    /// Build a lookup table mapping every token ID to its string representation.
+    /// Used to avoid calling `token_to_str` during generation (which would
+    /// require borrowing the engine while C++ holds a mutable reference).
+    pub fn build_vocab_table(&self) -> Vec<String> {
+        let n = unsafe { llama_vocab_n_tokens(self.vocab) } as usize;
+        let mut table = Vec::with_capacity(n);
+        for i in 0..n {
+            table.push(self.token_to_str(i as llama_token));
+        }
+        table
+    }
+
     /// EOS token ID.
     pub fn eos_token(&self) -> llama_token {
         unsafe { llama_vocab_eos(self.vocab) }
@@ -460,7 +478,15 @@ impl LlamaEngine {
     ///
     /// Calls the callback for each token. Callback returns `true` to stop.
     /// Returns the list of generated tokens (excluding EOS).
-    pub fn generate_stream<F>(&mut self, start_pos: i32, max_tokens: i32, mut on_token: F) -> Vec<llama_token>
+    pub fn generate_stream<F>(&mut self, start_pos: i32, max_tokens: i32, on_token: F) -> Vec<llama_token>
+    where
+        F: FnMut(llama_token) -> bool,
+    {
+        self.generate_stream_timed(start_pos, max_tokens, on_token).tokens
+    }
+
+    /// Like `generate_stream` but also returns decode wall-clock time.
+    pub fn generate_stream_timed<F>(&mut self, start_pos: i32, max_tokens: i32, mut on_token: F) -> GenerateResult
     where
         F: FnMut(llama_token) -> bool,
     {
@@ -483,6 +509,7 @@ impl LlamaEngine {
             tokens: Vec::new(),
         };
 
+        let t0 = std::time::Instant::now();
         unsafe {
             eaclaw_generate_loop(
                 self.ctx,
@@ -494,8 +521,12 @@ impl LlamaEngine {
                 &mut state as *mut _ as *mut c_void,
             );
         }
+        let decode_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-        state.tokens
+        GenerateResult {
+            tokens: state.tokens,
+            decode_ms,
+        }
     }
 
     /// Export KV state for eakv bridge (Approach A).
