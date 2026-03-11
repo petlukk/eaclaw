@@ -4,3 +4,7 @@
 *.d
 perf.data
 perf.data.old
+
+# Allow pre-built artifacts checked into the repo
+!kernels/prebuilt/*.so
+!third_party/eakv-kernels/*.o
