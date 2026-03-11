@@ -242,6 +242,25 @@ extern "C" {
     pub fn llama_sampler_init_top_k(k: i32) -> *mut llama_sampler;
 
     pub fn llama_sampler_chain_default_params() -> llama_sampler_chain_params;
+
+    // Logging
+    pub fn llama_log_set(
+        log_callback: Option<unsafe extern "C" fn(level: c_int, text: *const c_char, user_data: *mut c_void)>,
+        user_data: *mut c_void,
+    );
+}
+
+/// Suppress llama.cpp's verbose logging to stderr.
+/// Only warnings (3) and errors (4) are forwarded.
+unsafe extern "C" fn quiet_log_callback(level: c_int, text: *const c_char, _user_data: *mut c_void) {
+    // GGML_LOG_LEVEL: NONE=0, DEBUG=1, INFO=2, WARN=3, ERROR=4, CONT=5
+    if level >= 3 && level <= 4 {
+        let msg = std::ffi::CStr::from_ptr(text).to_string_lossy();
+        let msg = msg.trim_end();
+        if !msg.is_empty() {
+            eprintln!("llama.cpp: {msg}");
+        }
+    }
 }
 
 /// Safe wrapper around llama.cpp model + context.
@@ -266,6 +285,9 @@ impl LlamaEngine {
             .map_err(|e| format!("invalid model path: {e}"))?;
 
         unsafe {
+            // Suppress verbose llama.cpp logging (model loader, tensor info, etc.)
+            llama_log_set(Some(quiet_log_callback), std::ptr::null_mut());
+
             let mut model_params = llama_model_default_params();
             model_params.n_gpu_layers = 0; // CPU only
 
