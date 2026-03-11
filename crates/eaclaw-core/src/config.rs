@@ -2,6 +2,12 @@ use crate::error::{Error, Result};
 use std::env;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Backend {
+    Anthropic,
+    Local,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub api_key: String,
@@ -13,13 +19,26 @@ pub struct Config {
     pub identity: Option<String>,
     /// Allowed HTTP hosts. Empty = allow all.
     pub allowed_hosts: Vec<String>,
+    pub backend: Backend,
+    pub model_path: Option<String>,
+    pub ctx_size: usize,
+    pub threads: usize,
 }
 
 impl Config {
     /// Load configuration from environment variables.
     pub fn from_env() -> Result<Self> {
-        let api_key = env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| Error::Config("ANTHROPIC_API_KEY not set".into()))?;
+        let backend = match env::var("EACLAW_BACKEND").as_deref() {
+            Ok("local") => Backend::Local,
+            _ => Backend::Anthropic,
+        };
+
+        let api_key = if backend == Backend::Anthropic {
+            env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| Error::Config("ANTHROPIC_API_KEY not set".into()))?
+        } else {
+            env::var("ANTHROPIC_API_KEY").unwrap_or_default()
+        };
 
         let model = env::var("ANTHROPIC_MODEL")
             .unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
@@ -38,6 +57,22 @@ impl Config {
         let identity = load_identity();
         let allowed_hosts = load_allowed_hosts();
 
+        let model_path = env::var("EACLAW_MODEL_PATH").ok();
+
+        let ctx_size = env::var("EACLAW_CTX_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4096);
+
+        let threads = env::var("EACLAW_THREADS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+            });
+
         Ok(Self {
             api_key,
             model,
@@ -46,6 +81,10 @@ impl Config {
             command_prefix,
             identity,
             allowed_hosts,
+            backend,
+            model_path,
+            ctx_size,
+            threads,
         })
     }
 }

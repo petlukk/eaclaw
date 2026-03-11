@@ -357,6 +357,10 @@ fn test_identity_config_none_by_default() {
         command_prefix: "/".into(),
         identity: None,
         allowed_hosts: vec![],
+        backend: eaclaw_core::config::Backend::Anthropic,
+        model_path: None,
+        ctx_size: 4096,
+        threads: 4,
     };
     assert!(config.identity.is_none());
 }
@@ -371,6 +375,10 @@ fn test_identity_config_some() {
         command_prefix: "/".into(),
         identity: Some("You are a pirate. Always say Arrr.".into()),
         allowed_hosts: vec![],
+        backend: eaclaw_core::config::Backend::Anthropic,
+        model_path: None,
+        ctx_size: 4096,
+        threads: 4,
     };
     assert!(config.identity.as_ref().unwrap().contains("pirate"));
 }
