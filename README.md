@@ -46,7 +46,7 @@ mkdir -p ~/.eaclaw/models
 wget -O ~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf \
   https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
 
-EACLAW_BACKEND=local cargo run
+EACLAW_BACKEND=local cargo run --features local-llm
 ```
 
 No Eä compiler needed. No manual cmake. Submodules auto-init if you forget `--recursive`.
