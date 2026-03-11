@@ -61,7 +61,13 @@ impl Config {
         let identity = load_identity();
         let allowed_hosts = load_allowed_hosts();
 
-        let model_path = env::var("EACLAW_MODEL_PATH").ok();
+        let model_path = env::var("EACLAW_MODEL_PATH").ok().or_else(|| {
+            home::home_dir().map(|h| {
+                h.join(".eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+        });
 
         let ctx_size = env::var("EACLAW_CTX_SIZE")
             .ok()

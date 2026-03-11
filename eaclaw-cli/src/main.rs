@@ -66,11 +66,15 @@ fn build_llm(config: &Config) -> Arc<dyn eaclaw_core::llm::LlmProvider> {
         Backend::Anthropic => Arc::new(AnthropicProvider::new(config)),
         #[cfg(feature = "local-llm")]
         Backend::Local => {
-            let model_path = config.model_path.as_deref().unwrap_or_else(|| {
-                eprintln!("EACLAW_MODEL_PATH not set. Set it to a valid GGUF file.");
-                eprintln!("Download: https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF");
+            let model_path = config.model_path.as_deref().unwrap_or("model.gguf");
+            if !std::path::Path::new(model_path).exists() {
+                eprintln!("Model not found: {model_path}");
+                eprintln!("Download with:");
+                eprintln!("  mkdir -p ~/.eaclaw/models");
+                eprintln!("  wget -O ~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf \\");
+                eprintln!("    https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf");
                 std::process::exit(1);
-            });
+            }
             // Qwen2.5-3B: 36 layers, 2 KV heads, 128 head_dim
             match eaclaw_core::llm::LocalLlmProvider::new(
                 model_path, config.ctx_size as u32, config.threads as u32,
