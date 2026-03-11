@@ -195,8 +195,34 @@ impl LlmProvider for LocalLlmProvider {
         // Checkpoint eakv before generation (best-effort)
         let _checkpoint = inner.kv_cache.checkpoint();
 
-        // Generation loop
-        let eos = inner.engine.eos_token();
+        // Generation loop — runs in C++ for minimal per-token overhead.
+        // C++ handles decode+sample in a tight loop; Rust processes tokens after.
+        let gen_pos = inner.prefilled_tokens.len() as i32;
+        let max_gen = 2048i32;
+
+        // Tool-call detection state shared with the callback via raw pointer.
+        // The callback only touches detector state — engine is borrowed by C++.
+        let mut detector = ToolCallDetector::new(
+            inner.open_pattern.clone(),
+            inner.close_pattern.clone(),
+            512,
+        );
+        let mut tool_detected = false;
+
+        let generated = inner.engine.generate_stream(gen_pos, max_gen, |token| {
+            let result = detector.feed(token);
+            if matches!(result, DetectResult::ToolCall(_)) {
+                tool_detected = true;
+                return true; // stop generation
+            }
+            false // continue
+        });
+
+        // Update prefilled_tokens with generated tokens
+        inner.prefilled_tokens.extend_from_slice(&generated);
+
+        // Now process all generated tokens through the detector for streaming
+        // and content block construction. Reset detector and replay.
         let mut detector = ToolCallDetector::new(
             inner.open_pattern.clone(),
             inner.close_pattern.clone(),
@@ -205,21 +231,8 @@ impl LlmProvider for LocalLlmProvider {
         let mut content_blocks = Vec::new();
         let mut text_buf = String::new();
         let mut stop_reason = StopReason::EndTurn;
-        let mut gen_pos = inner.prefilled_tokens.len() as i32;
-        let max_gen = 2048i32;
 
-        for _ in 0..max_gen {
-            let token = inner.engine.sample();
-
-            if token == eos {
-                break;
-            }
-
-            inner.engine.decode(&[token], gen_pos)
-                .map_err(|e| crate::error::Error::Llm(e))?;
-            gen_pos += 1;
-            inner.prefilled_tokens.push(token);
-
+        for &token in &generated {
             match detector.feed(token) {
                 DetectResult::Text(t) => {
                     let piece = inner.engine.token_to_str(t);
