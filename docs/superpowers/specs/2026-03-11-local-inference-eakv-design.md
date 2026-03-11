@@ -229,24 +229,69 @@ Key responsibilities:
 - `<tool_call>` block detected in output → `StopReason::ToolUse`
 - EOS token or max tokens → `StopReason::EndTurn` / `StopReason::MaxTokens`
 
-### 5. Tool-Call Detection (Model-Agnostic)
+### 5. Tool-Call Detection (Token-Level, Zero-String)
 
-Parse generated text for tool calls using a generic format that works across models:
+Tool calls use the `<tool_call>` / `</tool_call>` XML format. Detection happens at the
+**token level** — no string construction or regex needed during the hot path.
+
+#### Token pattern matching
+
+At provider init, tokenize the tag prefixes once:
+
+```rust
+let open_pattern: Vec<i32> = tokenize("<tool_call>");   // e.g. [<, tool, _call, >]
+let close_pattern: Vec<i32> = tokenize("</tool_call>"); // e.g. [</, tool, _call, >]
+```
+
+During generation, maintain a small ring buffer of recent token IDs. After each
+sampled token, check if the tail of the buffer matches `open_pattern`:
+
+```rust
+if ring_buffer.ends_with(&open_pattern) {
+    // Enter tool-call capture mode
+    state = ToolCallCapture;
+}
+```
+
+This is a `memcmp` of ~3-5 integers per token — a few CPU cycles vs hundreds for
+string append + regex + JSON parse. ~50-100x faster than text-level detection.
+
+#### Three states during generation
 
 ```
-<tool_call>
-{"name": "tool_name", "arguments": {"key": "value"}}
-</tool_call>
+Normal → generating text, streaming tokens via on_text callback
+         match open_pattern → transition to ToolCallCapture
+
+ToolCallCapture → buffering token IDs (NOT streaming to on_text)
+                  match close_pattern → transition to ToolCallParse
+
+ToolCallParse → detokenize buffered IDs → serde_json::from_str
+                extract "name" + "arguments"
+                map to ContentBlock::ToolUse
+                set StopReason::ToolUse
 ```
 
-Detection during generation:
-- Watch for `<tool_call>` opening tag during token output
-- Once detected, buffer tokens until `</tool_call>`
-- Parse JSON between tags
-- Map to `ContentBlock::ToolUse`
+The JSON body is only detokenized and parsed once, when the closing tag is found.
+During capture, tokens are accumulated as raw `i32` IDs — no string allocation.
 
-This works with Qwen, Llama, Mistral — all use similar XML-delimited tool-call formats.
-The system prompt instructs the model to use this exact format.
+#### Existing kernel reuse
+
+For the JSON parse step, eaclaw's `extract_json_structural` kernel could be used
+to find structural positions (`{ } : , "`) in the detokenized JSON string. However,
+tool-call JSON is typically 50-200 bytes — too small for SIMD to outperform
+`serde_json::from_str()`. The kernel is available as a future optimization for
+batch/multi-stream scenarios where many tool calls are parsed concurrently.
+
+#### Why token-level detection is future-safe
+
+- Works identically in single-stream and multi-stream scenarios
+- No intermediate string state to manage per stream — just a ring buffer of ints
+- Pattern matching cost is constant regardless of context length
+- Naturally extends to detecting other patterns (e.g., `<think>`, `<code>`)
+  by adding more patterns to the match set
+
+This works with Qwen, Llama, Mistral — all produce similar token sequences for
+XML-delimited tags. The system prompt instructs the model to use this exact format.
 
 ### 6. System Prompt for Tool Use
 
@@ -322,7 +367,7 @@ for users who only want the Anthropic backend.
 |------|------|---------|
 | `crates/eaclaw-core/src/llm/llama_ffi.rs` | New | Raw FFI bindings to llama.cpp |
 | `crates/eaclaw-core/src/llm/local.rs` | New | `LocalLlmProvider` implementation |
-| `crates/eaclaw-core/src/llm/tool_parse.rs` | New | Generic `<tool_call>` XML parser |
+| `crates/eaclaw-core/src/llm/tool_parse.rs` | New | Token-level tool-call detector + JSON extractor |
 | `crates/eaclaw-core/src/llm/mod.rs` | Edit | Export new modules, add `Backend` enum |
 | `crates/eaclaw-core/src/config.rs` | Edit | Add local inference config vars |
 | `eaclaw-cli/src/main.rs` | Edit | Backend selection logic |
