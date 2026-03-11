@@ -248,6 +248,17 @@ extern "C" {
         log_callback: Option<unsafe extern "C" fn(level: c_int, text: *const c_char, user_data: *mut c_void)>,
         user_data: *mut c_void,
     );
+
+    // eaclaw C++ generation loop (csrc/eaclaw_generate.cpp)
+    pub fn eaclaw_generate_loop(
+        ctx: *mut llama_context,
+        smpl: *mut llama_sampler,
+        vocab: *const llama_vocab,
+        start_pos: i32,
+        max_tokens: i32,
+        cb: Option<unsafe extern "C" fn(token: i32, user_data: *mut c_void) -> c_int>,
+        user_data: *mut c_void,
+    ) -> i32;
 }
 
 /// Suppress llama.cpp's verbose logging to stderr.
@@ -443,6 +454,48 @@ impl LlamaEngine {
             let mem = llama_get_memory(self.ctx);
             llama_memory_seq_rm(mem, 0, p0, -1);
         }
+    }
+
+    /// Run generation loop in C++ for maximum throughput.
+    ///
+    /// Calls the callback for each token. Callback returns `true` to stop.
+    /// Returns the list of generated tokens (excluding EOS).
+    pub fn generate_stream<F>(&mut self, start_pos: i32, max_tokens: i32, mut on_token: F) -> Vec<llama_token>
+    where
+        F: FnMut(llama_token) -> bool,
+    {
+        struct CallbackState<'a, G: FnMut(llama_token) -> bool> {
+            on_token: &'a mut G,
+            tokens: Vec<llama_token>,
+        }
+
+        unsafe extern "C" fn trampoline<G: FnMut(llama_token) -> bool>(
+            token: i32,
+            user_data: *mut c_void,
+        ) -> c_int {
+            let state = &mut *(user_data as *mut CallbackState<G>);
+            state.tokens.push(token);
+            if (state.on_token)(token) { 1 } else { 0 }
+        }
+
+        let mut state = CallbackState {
+            on_token: &mut on_token,
+            tokens: Vec::new(),
+        };
+
+        unsafe {
+            eaclaw_generate_loop(
+                self.ctx,
+                self.sampler,
+                self.vocab,
+                start_pos,
+                max_tokens,
+                Some(trampoline::<F>),
+                &mut state as *mut _ as *mut c_void,
+            );
+        }
+
+        state.tokens
     }
 
     /// Export KV state for eakv bridge (Approach A).

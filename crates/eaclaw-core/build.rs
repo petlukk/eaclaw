@@ -52,6 +52,21 @@ fn link_llama_cpp() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let llama_build = std::path::PathBuf::from(&manifest_dir)
         .join("../../vendor/llama.cpp/build");
+    let llama_include = std::path::PathBuf::from(&manifest_dir)
+        .join("../../vendor/llama.cpp/include");
+
+    let ggml_include = std::path::PathBuf::from(&manifest_dir)
+        .join("../../vendor/llama.cpp/ggml/include");
+
+    // Compile our C++ generation loop shim
+    cc::Build::new()
+        .cpp(true)
+        .file(format!("{manifest_dir}/csrc/eaclaw_generate.cpp"))
+        .include(&llama_include)
+        .include(&ggml_include)
+        .flag("-std=c++17")
+        .flag("-O2")
+        .compile("eaclaw_generate");
 
     // Link llama.cpp static libraries (built via cmake)
     println!("cargo:rustc-link-search=native={}", llama_build.join("src").display());
@@ -68,6 +83,8 @@ fn link_llama_cpp() {
     println!("cargo:rustc-link-lib=m");
     println!("cargo:rustc-link-lib=pthread");
     println!("cargo:rustc-link-lib=gomp");
+
+    println!("cargo:rerun-if-changed=csrc/eaclaw_generate.cpp");
 }
 
 #[cfg(feature = "local-llm")]
