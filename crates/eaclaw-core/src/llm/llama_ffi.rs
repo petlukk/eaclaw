@@ -361,7 +361,19 @@ impl LlamaEngine {
     }
 
     /// Decode a batch of tokens (prefill or single-token generate).
+    /// Automatically chunks into n_batch-sized pieces for large prefills.
     pub fn decode(&mut self, tokens: &[llama_token], start_pos: i32) -> Result<(), String> {
+        const N_BATCH: usize = 512;
+
+        for (chunk_idx, chunk) in tokens.chunks(N_BATCH).enumerate() {
+            let chunk_start = start_pos + (chunk_idx * N_BATCH) as i32;
+            let is_last_chunk = chunk_start + chunk.len() as i32 >= start_pos + tokens.len() as i32;
+            self.decode_batch(chunk, chunk_start, is_last_chunk)?;
+        }
+        Ok(())
+    }
+
+    fn decode_batch(&mut self, tokens: &[llama_token], start_pos: i32, compute_logits: bool) -> Result<(), String> {
         unsafe {
             let mut batch = llama_batch_init(tokens.len() as i32, 0, 1);
             batch.n_tokens = tokens.len() as i32;
@@ -372,8 +384,8 @@ impl LlamaEngine {
                 *batch.n_seq_id.add(i) = 1;
                 let seq_ids = std::slice::from_raw_parts_mut(*batch.seq_id.add(i), 1);
                 seq_ids[0] = 0;
-                // Only compute logits for the last token
-                *batch.logits.add(i) = if i == tokens.len() - 1 { 1 } else { 0 };
+                // Only compute logits for the last token of the last chunk
+                *batch.logits.add(i) = if compute_logits && i == tokens.len() - 1 { 1 } else { 0 };
             }
 
             let rc = llama_decode(self.ctx, batch);
