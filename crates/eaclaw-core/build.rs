@@ -67,6 +67,7 @@ fn link_llama_cpp() {
     println!("cargo:rustc-link-lib=stdc++");
     println!("cargo:rustc-link-lib=m");
     println!("cargo:rustc-link-lib=pthread");
+    println!("cargo:rustc-link-lib=gomp");
 }
 
 #[cfg(feature = "local-llm")]

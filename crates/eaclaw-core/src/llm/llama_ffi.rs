@@ -12,6 +12,7 @@ use std::os::raw::c_uchar;
 pub enum llama_model {}
 pub enum llama_context {}
 pub enum llama_sampler {}
+pub enum llama_memory_i {}
 
 // Token type
 pub type llama_token = c_int;
@@ -106,9 +107,10 @@ extern "C" {
     // Logits
     pub fn llama_get_logits_ith(ctx: *mut llama_context, i: i32) -> *mut c_float;
 
-    // KV cache
-    pub fn llama_kv_cache_clear(ctx: *mut llama_context);
-    pub fn llama_kv_cache_seq_rm(ctx: *mut llama_context, seq_id: i32, p0: i32, p1: i32) -> bool;
+    // Memory (KV cache) — renamed from llama_kv_cache_* in newer llama.cpp
+    pub fn llama_get_memory(ctx: *const llama_context) -> *mut llama_memory_i;
+    pub fn llama_memory_clear(mem: *mut llama_memory_i, data: bool);
+    pub fn llama_memory_seq_rm(mem: *mut llama_memory_i, seq_id: i32, p0: i32, p1: i32) -> bool;
 
     // State (for Approach A — eakv bridge)
     pub fn llama_state_seq_get_size(ctx: *mut llama_context, seq_id: i32) -> usize;
@@ -284,12 +286,18 @@ impl LlamaEngine {
 
     /// Clear the KV cache.
     pub fn kv_cache_clear(&mut self) {
-        unsafe { llama_kv_cache_clear(self.ctx) }
+        unsafe {
+            let mem = llama_get_memory(self.ctx);
+            llama_memory_clear(mem, true);
+        }
     }
 
     /// Remove KV cache entries from position p0 to end.
     pub fn kv_cache_truncate(&mut self, p0: i32) {
-        unsafe { llama_kv_cache_seq_rm(self.ctx, 0, p0, -1); }
+        unsafe {
+            let mem = llama_get_memory(self.ctx);
+            llama_memory_seq_rm(mem, 0, p0, -1);
+        }
     }
 
     /// Export KV state for eakv bridge (Approach A).
