@@ -268,6 +268,30 @@ impl LlmProvider for LocalLlmProvider {
             content_blocks.push(ContentBlock::Text { text: text_buf });
         }
 
+        // Fallback: if tools were provided but model output raw JSON without
+        // <tool_call> tags, try to parse accumulated text as a tool call.
+        if !tools.is_empty() && stop_reason != StopReason::ToolUse {
+            if let Some(idx) = content_blocks.iter().position(|b| {
+                matches!(b, ContentBlock::Text { text } if text.trim_start().starts_with('{'))
+            }) {
+                if let ContentBlock::Text { text } = &content_blocks[idx] {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(text.trim()) {
+                        if val.get("name").and_then(|n| n.as_str()).is_some() {
+                            let name = val["name"].as_str().unwrap().to_string();
+                            let arguments = val.get("arguments")
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Object(Default::default()));
+                            let id = Self::generate_tool_id(&mut inner);
+                            content_blocks[idx] = ContentBlock::ToolUse {
+                                id, name, input: arguments,
+                            };
+                            stop_reason = StopReason::ToolUse;
+                        }
+                    }
+                }
+            }
+        }
+
         if content_blocks.is_empty() {
             content_blocks.push(ContentBlock::Text { text: String::new() });
         }
