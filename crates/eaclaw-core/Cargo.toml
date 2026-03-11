@@ -25,6 +25,13 @@ criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
 tempfile = "3"
 
+[build-dependencies]
+cc = { workspace = true }
+
+[features]
+default = []
+local-llm = []
+
 [[bench]]
 name = "safety_bench"
 harness = false
