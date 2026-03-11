@@ -60,33 +60,24 @@ The binary is self-contained — SIMD kernels are embedded and auto-extracted on
 
 ## Building from Source
 
-### Dependencies
-
-| Dependency | Version | Purpose |
-|------------|---------|---------|
-| [Eä compiler](https://github.com/petlukk/eacompute) | v1.6.0+ | Compiles `.ea` kernels to `.so` |
-| Rust | 1.85+ (edition 2024) | Builds the main binary |
-| LLVM | 18 | Required by the Eä compiler |
-| Go | 1.25+ | Builds the WhatsApp bridge (optional) |
-| OpenSSL dev | any | Required by reqwest (`libssl-dev` on Ubuntu) |
-
-### Build
+Requires a Rust toolchain. Pre-built SIMD kernels are included — no Eä compiler needed.
 
 ```bash
-# Set the Eä compiler path (download from eacompute releases or build from source)
-export EA=/path/to/ea
-
-./build.sh              # Compile .ea kernels → .so + build WhatsApp bridge
-cargo build --release   # Build the binary (embeds kernels)
-cargo test              # Run tests (230 tests, no LD_LIBRARY_PATH needed)
-cargo bench             # Run benchmarks
+# Cloud mode (Anthropic API)
+git clone https://github.com/petlukk/eaclaw
+cd eaclaw
+cargo build
+cargo test
 ```
 
 ### Local Inference (optional)
 
-Build with llama.cpp + eakv support for fully offline operation:
+Build with embedded llama.cpp + eakv for fully offline operation. Submodules are initialized automatically by the build script:
 
 ```bash
+# Local mode (no API key needed)
+git clone --recursive https://github.com/petlukk/eaclaw
+cd eaclaw
 cargo build --features local-llm
 ```
 
@@ -98,7 +89,15 @@ wget -O ~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf \
   https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
 ```
 
-Run with `EACLAW_BACKEND=local`. Works in both REPL and WhatsApp modes. No API key required.
+Run with `EACLAW_BACKEND=local`. Works in both REPL and WhatsApp modes.
+
+### Rebuilding SIMD Kernels (optional)
+
+Only needed if modifying `.ea` kernel sources. Requires the [Eä compiler](https://github.com/petlukk/eacompute). Go is required for the WhatsApp bridge.
+
+```bash
+./build.sh      # Compile .ea kernels → .so + build WhatsApp bridge
+```
 
 ## Modes
 

@@ -27,6 +27,7 @@ tempfile = "3"
 
 [build-dependencies]
 cc = { workspace = true }
+cmake = "0.1"
 
 [features]
 default = []
