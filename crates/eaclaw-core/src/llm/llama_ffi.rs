@@ -5,7 +5,7 @@
 
 #![allow(non_camel_case_types)]
 
-use std::ffi::{c_char, c_int, c_float};
+use std::ffi::{c_char, c_int, c_float, c_void};
 use std::os::raw::c_uchar;
 
 // Opaque types
@@ -13,29 +13,127 @@ pub enum llama_model {}
 pub enum llama_context {}
 pub enum llama_sampler {}
 pub enum llama_memory_i {}
+pub enum llama_vocab {}
 
 // Token type
 pub type llama_token = c_int;
 
-/// Model parameters
+/// Model parameters — matches the C struct layout on x86_64 exactly.
+///
+/// C layout (from llama.h):
+///   ptr devices                        offset  0, size 8
+///   ptr tensor_buft_overrides          offset  8, size 8
+///   i32 n_gpu_layers                   offset 16, size 4
+///   i32 split_mode (enum)              offset 20, size 4
+///   i32 main_gpu                       offset 24, size 4
+///   4 bytes padding                    offset 28, size 4
+///   ptr tensor_split                   offset 32, size 8
+///   ptr progress_callback              offset 40, size 8
+///   ptr progress_callback_user_data    offset 48, size 8
+///   ptr kv_overrides                   offset 56, size 8
+///   bool vocab_only                    offset 64, size 1
+///   bool use_mmap                      offset 65, size 1
+///   bool use_direct_io                 offset 66, size 1
+///   bool use_mlock                     offset 67, size 1
+///   bool check_tensors                 offset 68, size 1
+///   bool use_extra_bufts               offset 69, size 1
+///   bool no_host                       offset 70, size 1
+///   bool no_alloc                      offset 71, size 1
+///   Total: 72 bytes (aligned to 8)
 #[repr(C)]
 pub struct llama_model_params {
+    pub devices: *mut c_void,
+    pub tensor_buft_overrides: *const c_void,
     pub n_gpu_layers: c_int,
+    pub split_mode: c_int,
+    pub main_gpu: c_int,
+    _pad0: u32,
+    pub tensor_split: *const c_float,
+    pub progress_callback: *const c_void,
+    pub progress_callback_user_data: *mut c_void,
+    pub kv_overrides: *const c_void,
+    pub vocab_only: bool,
     pub use_mmap: bool,
+    pub use_direct_io: bool,
     pub use_mlock: bool,
-    // Pad remaining fields — we only set a few.
-    // The actual struct has more fields; we rely on default_params().
-    _padding: [u8; 128],
+    pub check_tensors: bool,
+    pub use_extra_bufts: bool,
+    pub no_host: bool,
+    pub no_alloc: bool,
 }
 
-/// Context parameters
+/// Context parameters — matches the C struct layout on x86_64 exactly.
+///
+/// C layout (from llama.h):
+///   u32 n_ctx                          offset  0, size 4
+///   u32 n_batch                        offset  4, size 4
+///   u32 n_ubatch                       offset  8, size 4
+///   u32 n_seq_max                      offset 12, size 4
+///   i32 n_threads                      offset 16, size 4
+///   i32 n_threads_batch                offset 20, size 4
+///   i32 rope_scaling_type (enum)       offset 24, size 4
+///   i32 pooling_type (enum)            offset 28, size 4
+///   i32 attention_type (enum)          offset 32, size 4
+///   i32 flash_attn_type (enum)         offset 36, size 4
+///   f32 rope_freq_base                 offset 40, size 4
+///   f32 rope_freq_scale                offset 44, size 4
+///   f32 yarn_ext_factor                offset 48, size 4
+///   f32 yarn_attn_factor               offset 52, size 4
+///   f32 yarn_beta_fast                 offset 56, size 4
+///   f32 yarn_beta_slow                 offset 60, size 4
+///   u32 yarn_orig_ctx                  offset 64, size 4
+///   f32 defrag_thold                   offset 68, size 4
+///   ptr cb_eval                        offset 72, size 8
+///   ptr cb_eval_user_data              offset 80, size 8
+///   i32 type_k (enum ggml_type)        offset 88, size 4
+///   i32 type_v (enum ggml_type)        offset 92, size 4
+///   ptr abort_callback                 offset 96, size 8
+///   ptr abort_callback_data            offset 104, size 8
+///   bool embeddings                    offset 112, size 1
+///   bool offload_kqv                   offset 113, size 1
+///   bool no_perf                       offset 114, size 1
+///   bool op_offload                    offset 115, size 1
+///   bool swa_full                      offset 116, size 1
+///   bool kv_unified                    offset 117, size 1
+///   2 bytes padding                    offset 118, size 2
+///   ptr samplers                       offset 120, size 8
+///   usize n_samplers                   offset 128, size 8
+///   Total: 136 bytes (aligned to 8)
 #[repr(C)]
 pub struct llama_context_params {
     pub n_ctx: u32,
     pub n_batch: u32,
-    pub n_threads: u32,
-    pub n_threads_batch: u32,
-    _padding: [u8; 128],
+    pub n_ubatch: u32,
+    pub n_seq_max: u32,
+    pub n_threads: c_int,
+    pub n_threads_batch: c_int,
+    pub rope_scaling_type: c_int,
+    pub pooling_type: c_int,
+    pub attention_type: c_int,
+    pub flash_attn_type: c_int,
+    pub rope_freq_base: c_float,
+    pub rope_freq_scale: c_float,
+    pub yarn_ext_factor: c_float,
+    pub yarn_attn_factor: c_float,
+    pub yarn_beta_fast: c_float,
+    pub yarn_beta_slow: c_float,
+    pub yarn_orig_ctx: u32,
+    pub defrag_thold: c_float,
+    pub cb_eval: *const c_void,
+    pub cb_eval_user_data: *mut c_void,
+    pub type_k: c_int,
+    pub type_v: c_int,
+    pub abort_callback: *const c_void,
+    pub abort_callback_data: *mut c_void,
+    pub embeddings: bool,
+    pub offload_kqv: bool,
+    pub no_perf: bool,
+    pub op_offload: bool,
+    pub swa_full: bool,
+    pub kv_unified: bool,
+    _pad0: [u8; 2],
+    pub samplers: *mut c_void,
+    pub n_samplers: usize,
 }
 
 /// Batch for decode
@@ -51,6 +149,11 @@ pub struct llama_batch {
     pub logits: *mut i8,
 }
 
+#[repr(C)]
+pub struct llama_sampler_chain_params {
+    pub no_perf: bool,
+}
+
 extern "C" {
     // Default params
     pub fn llama_model_default_params() -> llama_model_params;
@@ -63,6 +166,9 @@ extern "C" {
     ) -> *mut llama_model;
     pub fn llama_model_free(model: *mut llama_model);
 
+    // Vocab
+    pub fn llama_model_get_vocab(model: *const llama_model) -> *const llama_vocab;
+
     // Context
     pub fn llama_init_from_model(
         model: *mut llama_model,
@@ -70,9 +176,9 @@ extern "C" {
     ) -> *mut llama_context;
     pub fn llama_free(ctx: *mut llama_context);
 
-    // Tokenization
+    // Tokenization (takes vocab, not model)
     pub fn llama_tokenize(
-        model: *const llama_model,
+        vocab: *const llama_vocab,
         text: *const c_char,
         text_len: i32,
         tokens: *mut llama_token,
@@ -82,7 +188,7 @@ extern "C" {
     ) -> i32;
 
     pub fn llama_token_to_piece(
-        model: *const llama_model,
+        vocab: *const llama_vocab,
         token: llama_token,
         buf: *mut c_char,
         length: i32,
@@ -90,12 +196,12 @@ extern "C" {
         special: bool,
     ) -> i32;
 
-    // Special tokens
-    pub fn llama_token_eos(model: *const llama_model) -> llama_token;
-    pub fn llama_token_bos(model: *const llama_model) -> llama_token;
+    // Special tokens (takes vocab, not model)
+    pub fn llama_vocab_eos(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_bos(vocab: *const llama_vocab) -> llama_token;
 
-    // Vocab
-    pub fn llama_n_vocab(model: *const llama_model) -> i32;
+    // Vocab size
+    pub fn llama_vocab_n_tokens(vocab: *const llama_vocab) -> i32;
 
     // Decode
     pub fn llama_decode(ctx: *mut llama_context, batch: llama_batch) -> c_int;
@@ -107,7 +213,7 @@ extern "C" {
     // Logits
     pub fn llama_get_logits_ith(ctx: *mut llama_context, i: i32) -> *mut c_float;
 
-    // Memory (KV cache) — renamed from llama_kv_cache_* in newer llama.cpp
+    // Memory (KV cache)
     pub fn llama_get_memory(ctx: *const llama_context) -> *mut llama_memory_i;
     pub fn llama_memory_clear(mem: *mut llama_memory_i, data: bool);
     pub fn llama_memory_seq_rm(mem: *mut llama_memory_i, seq_id: i32, p0: i32, p1: i32) -> bool;
@@ -129,6 +235,8 @@ extern "C" {
     pub fn llama_sampler_reset(sampler: *mut llama_sampler);
 
     // Built-in samplers
+    pub fn llama_sampler_init_greedy() -> *mut llama_sampler;
+    pub fn llama_sampler_init_dist(seed: u32) -> *mut llama_sampler;
     pub fn llama_sampler_init_temp(temp: c_float) -> *mut llama_sampler;
     pub fn llama_sampler_init_top_p(p: c_float, min_keep: usize) -> *mut llama_sampler;
     pub fn llama_sampler_init_top_k(k: i32) -> *mut llama_sampler;
@@ -136,14 +244,10 @@ extern "C" {
     pub fn llama_sampler_chain_default_params() -> llama_sampler_chain_params;
 }
 
-#[repr(C)]
-pub struct llama_sampler_chain_params {
-    pub no_perf: bool,
-}
-
 /// Safe wrapper around llama.cpp model + context.
 pub struct LlamaEngine {
     model: *mut llama_model,
+    vocab: *const llama_vocab,
     ctx: *mut llama_context,
     sampler: *mut llama_sampler,
     n_ctx: u32,
@@ -170,11 +274,17 @@ impl LlamaEngine {
                 return Err(format!("failed to load model: {model_path}"));
             }
 
+            let vocab = llama_model_get_vocab(model);
+            if vocab.is_null() {
+                llama_model_free(model);
+                return Err("failed to get vocab from model".into());
+            }
+
             let mut ctx_params = llama_context_default_params();
             ctx_params.n_ctx = n_ctx;
             ctx_params.n_batch = 512;
-            ctx_params.n_threads = n_threads;
-            ctx_params.n_threads_batch = n_threads;
+            ctx_params.n_threads = n_threads as c_int;
+            ctx_params.n_threads_batch = n_threads as c_int;
 
             let ctx = llama_init_from_model(model, ctx_params);
             if ctx.is_null() {
@@ -182,14 +292,15 @@ impl LlamaEngine {
                 return Err("failed to create llama context".into());
             }
 
-            // Set up sampler chain: top-k → top-p → temperature
+            // Set up sampler chain: top-k -> top-p -> temperature
             let chain_params = llama_sampler_chain_default_params();
             let sampler = llama_sampler_chain_init(chain_params);
             llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
             llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.95, 1));
             llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
+            llama_sampler_chain_add(sampler, llama_sampler_init_dist(0xFFFFFFFF));
 
-            Ok(Self { model, ctx, sampler, n_ctx })
+            Ok(Self { model, vocab, ctx, sampler, n_ctx })
         }
     }
 
@@ -199,7 +310,7 @@ impl LlamaEngine {
         let mut tokens = vec![0i32; text.len() + 16];
         let n = unsafe {
             llama_tokenize(
-                self.model, c_text.as_ptr(), text.len() as i32,
+                self.vocab, c_text.as_ptr(), text.len() as i32,
                 tokens.as_mut_ptr(), tokens.len() as i32,
                 add_special, true,
             )
@@ -209,7 +320,7 @@ impl LlamaEngine {
             tokens.resize((-n) as usize, 0);
             let n2 = unsafe {
                 llama_tokenize(
-                    self.model, c_text.as_ptr(), text.len() as i32,
+                    self.vocab, c_text.as_ptr(), text.len() as i32,
                     tokens.as_mut_ptr(), tokens.len() as i32,
                     add_special, true,
                 )
@@ -226,7 +337,7 @@ impl LlamaEngine {
         let mut buf = vec![0u8; 64];
         let n = unsafe {
             llama_token_to_piece(
-                self.model, token,
+                self.vocab, token,
                 buf.as_mut_ptr() as *mut c_char, buf.len() as i32,
                 0, false,
             )
@@ -246,7 +357,7 @@ impl LlamaEngine {
 
     /// EOS token ID.
     pub fn eos_token(&self) -> llama_token {
-        unsafe { llama_token_eos(self.model) }
+        unsafe { llama_vocab_eos(self.vocab) }
     }
 
     /// Decode a batch of tokens (prefill or single-token generate).
