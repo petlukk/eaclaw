@@ -38,4 +38,44 @@ fn main() {
     fs::write(PathBuf::from(&out_dir).join("embedded_kernels.rs"), &code).unwrap();
 
     println!("cargo:rerun-if-changed=../../target/kernels");
+
+    // --- Local LLM: link pre-built llama.cpp + eakv (only with local-llm feature) ---
+    #[cfg(feature = "local-llm")]
+    {
+        link_llama_cpp();
+        link_eakv();
+    }
+}
+
+#[cfg(feature = "local-llm")]
+fn link_llama_cpp() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let llama_build = std::path::PathBuf::from(&manifest_dir)
+        .join("../../vendor/llama.cpp/build");
+
+    // Link llama.cpp static libraries (built via cmake)
+    println!("cargo:rustc-link-search=native={}", llama_build.join("src").display());
+    println!("cargo:rustc-link-search=native={}", llama_build.join("ggml/src").display());
+    println!("cargo:rustc-link-search=native={}", llama_build.join("ggml/src/ggml-cpu").display());
+
+    println!("cargo:rustc-link-lib=static=llama");
+    println!("cargo:rustc-link-lib=static=ggml");
+    println!("cargo:rustc-link-lib=static=ggml-base");
+    println!("cargo:rustc-link-lib=static=ggml-cpu");
+
+    // System libs needed by llama.cpp
+    println!("cargo:rustc-link-lib=stdc++");
+    println!("cargo:rustc-link-lib=m");
+    println!("cargo:rustc-link-lib=pthread");
+}
+
+#[cfg(feature = "local-llm")]
+fn link_eakv() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    // eakv is a sibling directory: /root/dev/eakv
+    let eakv_build = std::path::PathBuf::from(&manifest_dir)
+        .join("../../../eakv/build");
+    let eakv_abs = eakv_build.canonicalize().unwrap_or(eakv_build);
+    println!("cargo:rustc-link-search=native={}", eakv_abs.display());
+    println!("cargo:rustc-link-lib=static=eakv");
 }
