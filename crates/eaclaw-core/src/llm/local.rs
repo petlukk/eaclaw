@@ -1,5 +1,16 @@
 use crate::llm::{ContentBlock, Message, Role, ToolDef};
 
+#[cfg(feature = "local-llm")]
+use std::sync::Mutex;
+#[cfg(feature = "local-llm")]
+use super::llama_ffi::LlamaEngine;
+#[cfg(feature = "local-llm")]
+use super::eakv_ffi::EakvCache;
+#[cfg(feature = "local-llm")]
+use super::tool_parse::{ToolCallDetector, DetectResult};
+#[cfg(feature = "local-llm")]
+use super::{LlmProvider, LlmResponse, StopReason, OnTextFn};
+
 /// Format a conversation into the Qwen2.5 `<|im_start|>` / `<|im_end|>` chat template.
 ///
 /// When `tools` is non-empty, tool instructions and definitions are appended to the
@@ -77,6 +88,193 @@ pub fn format_chat_template(system: &str, messages: &[Message], tools: &[ToolDef
 /// can be reused before the first point of divergence.
 pub fn common_prefix_len(a: &[i32], b: &[i32]) -> usize {
     a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
+}
+
+#[cfg(feature = "local-llm")]
+pub struct LocalLlmProvider {
+    inner: Mutex<LocalLlmInner>,
+}
+
+#[cfg(feature = "local-llm")]
+struct LocalLlmInner {
+    engine: LlamaEngine,
+    kv_cache: EakvCache,
+    prefilled_tokens: Vec<i32>,
+    tool_id_counter: u64,
+    open_pattern: Vec<i32>,
+    close_pattern: Vec<i32>,
+    eakv_seq_len: i32,
+}
+
+#[cfg(feature = "local-llm")]
+impl LocalLlmProvider {
+    pub fn new(model_path: &str, n_ctx: u32, n_threads: u32,
+               n_layers: i32, n_kv_heads: i32, head_dim: i32) -> crate::error::Result<Self> {
+        let engine = LlamaEngine::new(model_path, n_ctx, n_threads)
+            .map_err(|e| crate::error::Error::Llm(e))?;
+
+        let kv_cache = EakvCache::new(n_layers, n_kv_heads, head_dim, n_ctx as i32)
+            .ok_or_else(|| crate::error::Error::Llm("failed to create eakv cache".into()))?;
+
+        let open_pattern = engine.tokenize("<tool_call>", false);
+        let close_pattern = engine.tokenize("</tool_call>", false);
+
+        Ok(Self {
+            inner: Mutex::new(LocalLlmInner {
+                engine,
+                kv_cache,
+                prefilled_tokens: Vec::new(),
+                tool_id_counter: 0,
+                open_pattern,
+                close_pattern,
+                eakv_seq_len: 0,
+            }),
+        })
+    }
+
+    fn generate_tool_id(inner: &mut LocalLlmInner) -> String {
+        inner.tool_id_counter += 1;
+        format!("local_{}", inner.tool_id_counter)
+    }
+}
+
+#[cfg(feature = "local-llm")]
+#[async_trait::async_trait]
+impl LlmProvider for LocalLlmProvider {
+    async fn chat(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        system: &str,
+    ) -> crate::error::Result<LlmResponse> {
+        let noop: OnTextFn<'_> = &mut |_: &str| {};
+        self.chat_stream(messages, tools, system, noop).await
+    }
+
+    async fn chat_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        system: &str,
+        on_text: OnTextFn<'_>,
+    ) -> crate::error::Result<LlmResponse> {
+        let formatted = format_chat_template(system, messages, tools);
+
+        let mut inner = self.inner.lock()
+            .map_err(|e| crate::error::Error::Llm(format!("lock poisoned: {e}")))?;
+
+        let new_tokens = inner.engine.tokenize(&formatted, true);
+        let prefix_len = common_prefix_len(&inner.prefilled_tokens, &new_tokens);
+
+        // If prefix diverges, truncate both llama.cpp and eakv KV caches
+        if prefix_len < inner.prefilled_tokens.len() {
+            inner.engine.kv_cache_truncate(prefix_len as i32);
+            inner.kv_cache.restore(prefix_len as i32)
+                .map_err(|e| crate::error::Error::Llm(e))?;
+            inner.eakv_seq_len = prefix_len as i32;
+        }
+
+        // Prefill only the new suffix
+        let suffix = &new_tokens[prefix_len..];
+        if !suffix.is_empty() {
+            inner.engine.decode(suffix, prefix_len as i32)
+                .map_err(|e| crate::error::Error::Llm(e))?;
+
+            // Export KV state from llama.cpp -> eakv (Approach A)
+            let kv_state = inner.engine.export_kv_state();
+            let seq_len = inner.eakv_seq_len;
+            inner.kv_cache.import_llama_state(&kv_state, seq_len)
+                .map_err(|e| crate::error::Error::Llm(e))?;
+            inner.eakv_seq_len = inner.kv_cache.seq_len();
+        }
+
+        inner.prefilled_tokens = new_tokens.clone();
+
+        // Checkpoint eakv before generation (O(1) — just saves seq_len)
+        let _checkpoint = inner.kv_cache.checkpoint();
+
+        // Generation loop
+        let eos = inner.engine.eos_token();
+        let mut detector = ToolCallDetector::new(
+            inner.open_pattern.clone(),
+            inner.close_pattern.clone(),
+            512,
+        );
+        let mut content_blocks = Vec::new();
+        let mut text_buf = String::new();
+        let mut stop_reason = StopReason::EndTurn;
+        let mut gen_pos = inner.prefilled_tokens.len() as i32;
+        let max_gen = 2048i32;
+
+        for _ in 0..max_gen {
+            let token = inner.engine.sample();
+
+            if token == eos {
+                break;
+            }
+
+            inner.engine.decode(&[token], gen_pos)
+                .map_err(|e| crate::error::Error::Llm(e))?;
+            gen_pos += 1;
+            inner.prefilled_tokens.push(token);
+
+            match detector.feed(token) {
+                DetectResult::Text(t) => {
+                    let piece = inner.engine.token_to_str(t);
+                    text_buf.push_str(&piece);
+                    on_text(&piece);
+                }
+                DetectResult::TagOpen | DetectResult::Captured => {
+                    // Suppressed from output
+                }
+                DetectResult::ToolCall(body_tokens) => {
+                    if !text_buf.is_empty() {
+                        content_blocks.push(ContentBlock::Text {
+                            text: std::mem::take(&mut text_buf),
+                        });
+                    }
+
+                    let json_str = inner.engine.detokenize(&body_tokens);
+                    match serde_json::from_str::<serde_json::Value>(&json_str) {
+                        Ok(val) => {
+                            let name = val["name"].as_str().unwrap_or("").to_string();
+                            let arguments = val["arguments"].clone();
+                            let id = Self::generate_tool_id(&mut inner);
+                            content_blocks.push(ContentBlock::ToolUse {
+                                id,
+                                name,
+                                input: arguments,
+                            });
+                            stop_reason = StopReason::ToolUse;
+                        }
+                        Err(_e) => {
+                            text_buf.push_str(&format!("<tool_call>{json_str}</tool_call>"));
+                            on_text(&format!("<tool_call>{json_str}</tool_call>"));
+                        }
+                    }
+                    break;
+                }
+                DetectResult::Aborted(tokens) => {
+                    let text = inner.engine.detokenize(&tokens);
+                    text_buf.push_str(&text);
+                    on_text(&text);
+                }
+            }
+        }
+
+        if !text_buf.is_empty() {
+            content_blocks.push(ContentBlock::Text { text: text_buf });
+        }
+
+        if content_blocks.is_empty() {
+            content_blocks.push(ContentBlock::Text { text: String::new() });
+        }
+
+        Ok(LlmResponse {
+            content: content_blocks,
+            stop_reason,
+        })
+    }
 }
 
 #[cfg(test)]
