@@ -28,16 +28,28 @@ The archive contains two binaries:
 ### Cloud Mode (Anthropic API)
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-./eaclaw-cli
+git clone https://github.com/petlukk/eaclaw
+cd eaclaw
+cargo build
+ANTHROPIC_API_KEY=sk-ant-... cargo run
 ```
 
 ### Local Mode (no API key needed)
 
 ```bash
-export EACLAW_BACKEND=local
-./eaclaw
+git clone --recursive https://github.com/petlukk/eaclaw
+cd eaclaw
+cargo build --features local-llm
+
+# Download a model (~1.8 GB, one-time)
+mkdir -p ~/.eaclaw/models
+wget -O ~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
+
+EACLAW_BACKEND=local cargo run
 ```
+
+No Eä compiler needed. No manual cmake. Submodules auto-init if you forget `--recursive`.
 
 ### WhatsApp Mode
 
@@ -60,36 +72,14 @@ The binary is self-contained — SIMD kernels are embedded and auto-extracted on
 
 ## Building from Source
 
-Requires a Rust toolchain. Pre-built SIMD kernels are included — no Eä compiler needed.
+Requires only a Rust toolchain. Pre-built SIMD kernels are checked into the repo.
 
-```bash
-# Cloud mode (Anthropic API)
-git clone https://github.com/petlukk/eaclaw
-cd eaclaw
-cargo build
-cargo test
-```
+| Mode | Clone | Build |
+|------|-------|-------|
+| Cloud | `git clone` | `cargo build` |
+| Local | `git clone --recursive` | `cargo build --features local-llm` |
 
-### Local Inference (optional)
-
-Build with embedded llama.cpp + eakv for fully offline operation. Submodules are initialized automatically by the build script:
-
-```bash
-# Local mode (no API key needed)
-git clone --recursive https://github.com/petlukk/eaclaw
-cd eaclaw
-cargo build --features local-llm
-```
-
-Download a model (~1.8 GB):
-
-```bash
-mkdir -p ~/.eaclaw/models
-wget -O ~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf \
-  https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
-```
-
-Run with `EACLAW_BACKEND=local`. Works in both REPL and WhatsApp modes.
+The `local-llm` feature builds llama.cpp and eakv from source automatically via cmake. First build takes ~5 minutes; subsequent builds are cached.
 
 ### Rebuilding SIMD Kernels (optional)
 
@@ -257,13 +247,13 @@ The safety scan adds **~2 µs** of latency to every message — invisible next t
 
 | Metric | eaclaw | llama.cpp standalone |
 |--------|--------|---------------------|
-| Model load | **2.5s** | 3.7s |
-| Decode (pure generation) | **9.5 tok/s** | 10.1 tok/s |
-| End-to-end (incl. prefill) | 4.2 tok/s | — |
-| Generation (KV reuse) | **9.0 tok/s** decode | N/A (restarts each time) |
-| Tool-call round-trip | 5.4s | N/A |
+| Model load | **1.9s** | 3.7s |
+| Decode (pure generation) | **8.0 tok/s** | 9.1 tok/s |
+| End-to-end (incl. prefill) | 3.5 tok/s | — |
+| Decode with KV reuse | **7.9 tok/s** | N/A (restarts each time) |
+| Tool-call round-trip | 6.4s | N/A |
 
-eaclaw reaches **94% of standalone llama.cpp** decode speed. The generation loop runs in C++ with a pre-built vocab lookup table for single-pass streaming and tool detection — no replay pass or per-token string conversion through the FFI boundary. Multi-turn conversations get free KV cache reuse via eakv checkpointing.
+eaclaw reaches **~90% of standalone llama.cpp** decode speed. The generation loop runs in C++ with a pre-built vocab lookup table for single-pass streaming and tool detection — no replay pass or per-token string conversion through the FFI boundary. Multi-turn conversations get free KV cache reuse via eakv checkpointing.
 
 ## Architecture
 
