@@ -78,7 +78,7 @@ Eä kernels process input at memory bandwidth (~GB/s), rejecting ~97% of bytes. 
 
 ### Single Binary Packaging
 
-All 7 Eä kernel `.so` files (~126 KB total) are embedded in the binary via `include_bytes!` at compile time. On first run, they are extracted to `~/.eaclaw/lib/v{VERSION}/` and loaded via `libloading`. No `LD_LIBRARY_PATH` required.
+All 8 Eä kernel `.so` files are embedded in the binary via `include_bytes!` at compile time. On first run, they are extracted to `~/.eaclaw/lib/v{VERSION}/` and loaded via `libloading`. The search kernel ships in two variants (AVX and AVX-512); runtime CPUID detection selects the appropriate one. No `LD_LIBRARY_PATH` required.
 
 > **Note:** Eä kernels target x86_64 SIMD. The compiler supports aarch64 cross-compilation but this has not been tested for eaclaw.
 
@@ -95,7 +95,8 @@ eaclaw/
 │   ├── leak_scanner.ea               #   Secret leak prefix filter (1,395 B)
 │   ├── fused_safety.ea               #   Combined inject+leak single pass (2,024 B)
 │   ├── json_scanner.ea               #   JSON structural char finding (2,890 B)
-│   └── search.ea                     #   Vector similarity operations (23,196 B)
+│   ├── search.ea                     #   Vector similarity operations, f32x8 AVX fallback
+│   └── search_avx512.ea              #   Vector similarity operations, f32x16 AVX-512 (15,740 B)
 │
 ├── crates/eaclaw-core/               # Core Rust library
 │   └── src/
@@ -160,6 +161,7 @@ eaclaw/
 ├── crates/eaclaw-core/tests/         # Integration tests
 │   ├── tool_integration.rs           #   Full tool + router tests
 │   ├── recall_integration.rs         #   Recall system tests
+│   ├── recall_bench.rs               #   Recall latency benchmarks
 │   └── edge_cases.rs                 #   Safety, allowlist, identity tests
 │
 │       └── persist.rs                 #   JSONL history log + VectorStore replay
@@ -177,7 +179,6 @@ eaclaw/
 │
 ├── build.sh                          #   Compile .ea → .so + FFI bindings + Go bridge
 ├── Cargo.toml                        #   Workspace (LTO, codegen-units=1)
-├── CLAUDE.md                         #   Development conventions
 └── README.md                         #   User documentation
 ```
 
@@ -185,7 +186,7 @@ eaclaw/
 
 ## Eä Kernels
 
-Seven kernels compiled to shared libraries by the Eä v1.6.0 compiler. All use `u8x16` SIMD vectors (not `u8x32`, which has movemask sign-bit issues). Compiled and tested on x86_64.
+Eight kernels compiled to shared libraries by the Eä compiler. Safety and routing kernels use `u8x16` SIMD vectors (SSE2). The search kernel uses `f32x16` AVX-512 on supported CPUs, falling back to `f32x8` AVX. Compiled and tested on x86_64.
 
 ### command_router (1,338 bytes)
 
@@ -228,9 +229,9 @@ Classifies each byte into flag categories via SIMD range comparisons:
 
 Finds JSON structural characters (`{}[]:",\`) via SIMD equality checks. Two exports: `count_json_structural` (total count) and `extract_json_structural` (positions + types arrays).
 
-### search (23,196 bytes)
+### search (15,740 bytes AVX-512 / 23,196 bytes AVX fallback)
 
-Vector similarity operations for conversation recall. Six exports: `batch_dot`, `batch_cosine`, `batch_l2`, `normalize_vectors`, `threshold_filter`, `top_k`. Uses `f32x8` on x86_64, `f32x4` on aarch64.
+Vector similarity operations for conversation recall. Six exports: `batch_dot`, `batch_cosine`, `batch_l2`, `normalize_vectors`, `threshold_filter`, `top_k`. AVX-512 variant uses `f32x16` on x86_64 (selected at runtime via CPUID), falling back to `f32x8` AVX. aarch64 uses `f32x4`.
 
 ---
 
@@ -258,8 +259,9 @@ fused_safety SIMD kernel (single pass, ~2 µs at 1KB)
 Tool output
     │
     ▼
-leak scan only (no injection check on outputs)
+fused SIMD scan (injection + leak detection)
     │
+    ├──► blocks tool results containing injection attempts
     └──► blocks tool results containing secrets
 ```
 
@@ -277,7 +279,7 @@ leak scan only (no injection check on outputs)
 
 Pipeline: `embed_bytes → normalize_vectors (SIMD) → batch_cosine (SIMD FMA) → top_k (SIMD)`
 
-All conversation turns (user + assistant) are indexed. Zero API calls. Measured latency: **1.7 µs** at 20 entries (typical conversation), **22 µs** at 500 entries.
+All conversation turns (user + assistant) are indexed. Zero API calls. Measured latency: **1.6 µs** at 20 entries (typical conversation, AVX-512), **22 µs** at 500 entries.
 
 ---
 
@@ -375,7 +377,7 @@ loop {
         if response.has_tool_use() {
             for tool_use in response.tool_uses {
                 let output = tool.execute(input);
-                let scan = safety.scan_output(output);  // leak check
+                let scan = safety.scan_output(output);  // injection + leak check
                 messages.push(tool_result);
             }
             continue;  // next LLM turn
@@ -478,11 +480,13 @@ All 24 commands (8 meta + 16 tools) matched by the SIMD command router with two-
 | fused_safety | 2,024 B | 3.2% |
 | byte_classifier | 2,478 B | 3.9% |
 | json_scanner | 2,890 B | 4.5% |
-| search | 23,196 B | 36.2% |
+| search (AVX-512) | 15,740 B | 24.6% |
+| search (AVX fallback) | 23,196 B | 36.2% |
 | **Hot path (Rust scan_input + fused kernel)** | **5,410 B** | **8.5%** |
-| **All kernels** | **34,943 B** | **54.6%** |
+| **All kernels (AVX-512)** | **27,587 B** | **43.1%** |
+| **All kernels (AVX fallback)** | **35,043 B** | **54.8%** |
 
-The hot path uses 8.5% of L1 instruction cache. All kernels combined fit in just over half.
+On AVX-512 machines, the full hot path (all kernels) fits in L1 icache (27.6 KB < 32 KB). On AVX-only machines, the search kernel spills to L2.
 
 ### Throughput (Criterion)
 
@@ -572,15 +576,16 @@ Safety scanning adds **2–3 microseconds** per turn. Six orders of magnitude fa
 
 ## Test Results
 
-230 tests across unit tests, integration tests, and edge case tests:
+246 tests across unit tests, integration tests, and edge case tests:
 
 ```
-test result: ok. 157 passed  (unit tests — eaclaw-core lib)
-test result: ok. 32 passed   (edge cases — safety, allowlist, identity, calc)
+test result: ok. 170 passed  (unit tests — eaclaw-core lib)
+test result: ok. 33 passed   (edge cases — safety, allowlist, identity, calc)
 test result: ok. 10 passed   (recall — conversation, unicode, large store)
+test result: ok. 2 passed    (recall bench — latency benchmarks)
 test result: ok. 31 passed   (tool integration — all 16 tools + router)
 ─────────────────────────────
-         230 passed, 0 failed
+         246 passed, 0 failed
 ```
 
 ---
@@ -627,11 +632,11 @@ cargo test --features local-llm -p eaclaw-core --test local_llm_bench -- --nocap
 
 4. **No regex, no aho-corasick** — Eä kernels replace these entirely. Benchmarks show comparable or better throughput with zero runtime dependencies.
 
-5. **`u8x16` not `u8x32`** — Wider vectors cause movemask sign-bit issues when extracting match positions. 16-byte vectors give clean 16-bit masks.
+5. **`u8x16` not `u8x32` for safety kernels** — Wider vectors cause movemask sign-bit issues when extracting match positions. 16-byte vectors give clean 16-bit masks. The search kernel uses `f32x16` (AVX-512) where available, since it operates on f32 vectors and doesn't need movemask.
 
 6. **Caller-provided memory** — Eä kernels never allocate. The Rust wrapper pre-allocates output arrays based on input length. Kernel code stays pure computation.
 
-7. **Embedded kernels** — All `.so` files are embedded in the binary via `include_bytes!` and extracted to `~/.eaclaw/lib/v{VERSION}/` on first run. Version-stamped for clean upgrades.
+7. **Embedded kernels with runtime dispatch** — All `.so` files are embedded in the binary via `include_bytes!` and extracted to `~/.eaclaw/lib/v{VERSION}/` on first run. Version-stamped for clean upgrades. The search kernel ships in AVX and AVX-512 variants; `is_x86_feature_detected!("avx512f")` selects the right one at startup.
 
 8. **Byte-histogram recall** — 256-dim embeddings (one per byte value) for conversation search. Zero external API calls, microsecond latency, pure SIMD cosine similarity.
 
