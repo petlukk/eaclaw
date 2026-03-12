@@ -16,6 +16,11 @@ use super::{LlmProvider, LlmResponse, StopReason, OnTextFn};
 /// When `tools` is non-empty, tool instructions and definitions are appended to the
 /// system message. The returned string ends with `<|im_start|>assistant\n` to prompt
 /// the model to generate its next turn.
+///
+/// INVARIANT: The system block (system prompt + tool definitions) MUST always be
+/// the first tokens in the output. This enables KV cache prefix reuse across turns
+/// via `common_prefix_len()`. Do not inject dynamic content (timestamps, turn IDs)
+/// before or within the system block.
 pub fn format_chat_template(system: &str, messages: &[Message], tools: &[ToolDef]) -> String {
     let mut out = String::new();
 
