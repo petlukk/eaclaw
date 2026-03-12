@@ -12,6 +12,23 @@ pub struct ScanResult {
     pub details: Vec<SafetyWarning>,
 }
 
+impl ScanResult {
+    /// Returns true if any safety issue was found (injection or leak).
+    pub fn is_blocked(&self) -> bool {
+        self.injection_found || self.leaks_found
+    }
+
+    /// Human-readable reason for blocking, or None if clean.
+    pub fn block_reason(&self) -> Option<&'static str> {
+        match (self.injection_found, self.leaks_found) {
+            (true, true) => Some("contains prompt injection and potential secrets"),
+            (true, false) => Some("contains prompt injection attempt"),
+            (false, true) => Some("contains potential secrets"),
+            (false, false) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SafetyWarning {
     pub kind: WarningKind,
@@ -86,18 +103,29 @@ impl SafetyLayer {
     }
 
     /// Scan output content (tool results, LLM responses).
+    ///
+    /// Checks for both injection patterns and secret leaks. Tool results
+    /// (especially from HTTP fetches) can contain prompt injection attempts
+    /// that must be detected before feeding content back to the LLM.
     pub fn scan_output(&mut self, content: &str) -> ScanResult {
         let bytes = content.as_bytes();
         let mut details = Vec::new();
 
-        // For output, only scan leaks — reuse the fused scanner
+        // Fused SIMD scan — reuses internal buffers
         let masks = self.scanner.scan(bytes);
+
+        // Check injection patterns (defends against prompt injection via tool output)
+        let injection_warnings =
+            self.sanitizer.verify_from_masks(masks.inject_masks, bytes);
+        let injection_found = !injection_warnings.is_empty();
+        details.extend(injection_warnings);
+
         let leak_warnings = self.leak_detector.verify_from_masks(masks.leak_masks, bytes);
         let leaks_found = !leak_warnings.is_empty();
         details.extend(leak_warnings);
 
         ScanResult {
-            injection_found: false,
+            injection_found,
             leaks_found,
             details,
         }

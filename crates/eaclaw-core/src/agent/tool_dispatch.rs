@@ -200,9 +200,9 @@ impl Agent {
         // Safety scan on final output
         if let Some(ref output) = pipe_data {
             let scan = self.safety.scan_output(output);
-            if scan.leaks_found {
+            if let Some(reason) = scan.block_reason() {
                 channel
-                    .send("Pipeline output blocked: contains potential secrets.")
+                    .send(&format!("Pipeline output blocked: {reason}."))
                     .await;
             } else {
                 channel.send(output).await;
@@ -295,12 +295,12 @@ impl Agent {
 
         tool.execute_stream(params, &mut on_chunk).await?;
 
-        // Leak scan the full output
+        // Safety scan the full output (injection + leak detection)
         let full_output: String = chunks.iter().map(|s| s.as_str()).collect();
         let scan = self.safety.scan_output(&full_output);
-        if scan.leaks_found {
+        if let Some(reason) = scan.block_reason() {
             channel
-                .send("Tool output blocked: contains potential secrets.")
+                .send(&format!("Tool output blocked: {reason}."))
                 .await;
             return Ok(());
         }

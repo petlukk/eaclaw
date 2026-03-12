@@ -236,9 +236,9 @@ impl Agent {
             match self.execute_direct_tool(cmd_id, &arg_str).await {
                 Ok(output) => {
                     let scan = self.safety.scan_output(&output);
-                    if scan.leaks_found {
+                    if let Some(reason) = scan.block_reason() {
                         channel
-                            .send("Tool output blocked: contains potential secrets.")
+                            .send(&format!("Tool output blocked: {reason}."))
                             .await;
                     } else {
                         channel.send(&output).await;
@@ -440,10 +440,10 @@ impl Agent {
                     Some(tool) => match tool.execute(input.clone()).await {
                         Ok(output) => {
                             let scan = self.safety.scan_output(&output);
-                            if scan.leaks_found {
+                            if let Some(reason) = scan.block_reason() {
                                 ContentBlock::tool_error(
                                     id,
-                                    "Tool output blocked: contains potential secrets",
+                                    format!("Tool output blocked: {reason}"),
                                 )
                             } else {
                                 ContentBlock::tool_result(id, &output)

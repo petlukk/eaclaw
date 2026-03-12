@@ -111,8 +111,8 @@ pub async fn run(
                                     Some(tool) => match tool.execute(params).await {
                                         Ok(output) => {
                                             let scan = safety.scan_output(&output);
-                                            if scan.leaks_found {
-                                                "Output blocked: contains potential secrets.".into()
+                                            if let Some(reason) = scan.block_reason() {
+                                                format!("Output blocked: {reason}.")
                                             } else {
                                                 output
                                             }
@@ -315,10 +315,10 @@ async fn run_llm_turn(
                 Some(tool) => match tool.execute(input.clone()).await {
                     Ok(output) => {
                         let scan = safety.scan_output(&output);
-                        if scan.leaks_found {
+                        if let Some(reason) = scan.block_reason() {
                             ContentBlock::tool_error(
                                 id,
-                                "Tool output blocked: contains potential secrets",
+                                format!("Tool output blocked: {reason}"),
                             )
                         } else {
                             ContentBlock::tool_result(id, &output)
