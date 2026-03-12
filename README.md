@@ -4,7 +4,9 @@ A high-performance AI assistant powered by SIMD kernels written in [Eä](https:/
 
 **Every kernel fits in L1 cache.** The entire hot path — safety scanning, command routing, conversation recall — runs at memory bandwidth with zero allocations on the fast path. Local inference uses llama.cpp with [eakv](https://github.com/petlukk/eakv) KV cache compression and O(1) checkpointing, so tool-call loops resume generation without re-prefilling the full context.
 
-> **Warning:** eaclaw is **not sandboxed**. The agent can execute shell commands, read/write files, and make HTTP requests with the full permissions of the user running it. The SIMD safety layer scans for prompt injection and secret leaks, but it is not a security boundary. Do not run eaclaw on systems with sensitive data unless you understand the risks. Use endpoint allowlisting (`~/.eaclaw/allowed_hosts.txt`) and review the tools available before use.
+**No sandbox. No container. Still safe.** eaclaw uses a deterministic shell classifier and policy layer to prevent destructive commands (`rm -rf`, `mkfs`, `dd`, `shutdown`, fork bombs) without Docker, VMs, or seccomp overhead. Every `/shell` invocation is classified as read-only, write, or destructive — and the policy decides what runs. Combined with SIMD prompt injection scanning and endpoint allowlisting, the agent can operate with real system access while keeping guardrails that work at nanosecond speed.
+
+> **Note:** The shell guard and safety scanner are defense-in-depth layers, not a security boundary. eaclaw runs with the full permissions of the user. Review your policy (`EACLAW_SHELL_POLICY`, default `safe`) and endpoint allowlist (`~/.eaclaw/allowed_hosts.txt`) before deploying.
 
 ## Install
 
