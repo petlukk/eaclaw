@@ -328,6 +328,7 @@ impl LlamaEngine {
             let mut ctx_params = llama_context_default_params();
             ctx_params.n_ctx = n_ctx;
             ctx_params.n_batch = n_batch;
+            ctx_params.n_ubatch = n_batch;
             ctx_params.n_threads = n_threads as c_int;
             ctx_params.n_threads_batch = n_threads as c_int;
 

@@ -31,7 +31,9 @@ mod bench {
 
         // 1. Model load time
         let t0 = Instant::now();
-        let provider = LocalLlmProvider::new(&path, 4096, 512, 4, false, 36, 2, 128).unwrap();
+        let n_ctx: u32 = std::env::var("EACLAW_CTX_SIZE")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(2048);
+        let provider = LocalLlmProvider::new(&path, n_ctx, 512, 4, false, 36, 2, 128).unwrap();
         let load_ms = t0.elapsed().as_millis();
         println!("\n=== Local Inference Benchmark ===");
         println!("Model load:        {load_ms} ms");

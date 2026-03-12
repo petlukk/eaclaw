@@ -175,8 +175,9 @@ impl LlmProvider for LocalLlmProvider {
         let mut inner = self.inner.lock()
             .map_err(|e| crate::error::Error::Llm(format!("lock poisoned: {e}")))?;
 
-        let t_prefill = std::time::Instant::now();
+        let t_tok = std::time::Instant::now();
         let new_tokens = inner.engine.tokenize(&formatted, true);
+        let tok_ms = t_tok.elapsed().as_secs_f64() * 1000.0;
         let prefix_len = common_prefix_len(&inner.prefilled_tokens, &new_tokens);
 
         // If prefix diverges, truncate llama.cpp KV cache (and eakv if synced)
@@ -190,11 +191,12 @@ impl LlmProvider for LocalLlmProvider {
         // Prefill only the new suffix
         let suffix = &new_tokens[prefix_len..];
         let suffix_len = suffix.len();
+        let t_decode = std::time::Instant::now();
         if !suffix.is_empty() {
             inner.engine.decode(suffix, prefix_len as i32)
                 .map_err(|e| crate::error::Error::Llm(e))?;
         }
-        let prefill_ms = t_prefill.elapsed().as_secs_f64() * 1000.0;
+        let decode_ms = t_decode.elapsed().as_secs_f64() * 1000.0;
 
         let t_eakv = std::time::Instant::now();
         if suffix_len > 0 {
@@ -214,7 +216,7 @@ impl LlmProvider for LocalLlmProvider {
         // Checkpoint eakv before generation (best-effort)
         let _checkpoint = inner.kv_cache.checkpoint();
 
-        eprintln!("eaclaw prefill: {suffix_len} tokens ({prefix_len} reused) in {prefill_ms:.1} ms, eakv sync {eakv_ms:.1} ms [n_ctx={}]", inner.n_ctx);
+        eprintln!("eaclaw prefill: {suffix_len} tokens ({prefix_len} reused) — tokenize {tok_ms:.1} ms, decode {decode_ms:.1} ms, eakv sync {eakv_ms:.1} ms [n_ctx={}]", inner.n_ctx);
 
         // Generation loop — runs in C++ for minimal per-token overhead.
         // Single-pass: streaming, tool detection, and content block building all
