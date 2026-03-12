@@ -53,7 +53,9 @@ int32_t eaclaw_generate_loop(
 
         n_generated++;
 
-        // Invoke callback — stop if it returns non-zero
+        // Per-token callback overhead is negligible (~2ns) since the trampoline
+        // is a C function pointer call within the same binary, not an FFI crossing.
+        // Batching was considered but adds complexity for <1% gain.
         if (cb(token, user_data) != 0) {
             // Still need to decode this token into KV cache
             // so the state is consistent

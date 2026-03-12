@@ -281,6 +281,7 @@ pub struct LlamaEngine {
     ctx: *mut llama_context,
     sampler: *mut llama_sampler,
     _n_ctx: u32,
+    n_batch: u32,
 }
 
 // Safety: LlamaEngine is used behind a Mutex in LocalLlmProvider,
@@ -295,7 +296,7 @@ pub struct GenerateResult {
 
 impl LlamaEngine {
     /// Load model and create context.
-    pub fn new(model_path: &str, n_ctx: u32, n_threads: u32) -> Result<Self, String> {
+    pub fn new(model_path: &str, n_ctx: u32, n_batch: u32, n_threads: u32, mlock: bool) -> Result<Self, String> {
         use std::ffi::CString;
 
         let c_path = CString::new(model_path)
@@ -307,10 +308,15 @@ impl LlamaEngine {
 
             let mut model_params = llama_model_default_params();
             model_params.n_gpu_layers = 0; // CPU only
+            model_params.use_mlock = mlock;
 
             let model = llama_model_load_from_file(c_path.as_ptr(), model_params);
             if model.is_null() {
                 return Err(format!("failed to load model: {model_path}"));
+            }
+            if mlock {
+                eprintln!("eaclaw: mlock enabled — if model load was slow or failed, \
+                           check `ulimit -l` or set memlock in /etc/security/limits.conf");
             }
 
             let vocab = llama_model_get_vocab(model);
@@ -321,7 +327,7 @@ impl LlamaEngine {
 
             let mut ctx_params = llama_context_default_params();
             ctx_params.n_ctx = n_ctx;
-            ctx_params.n_batch = 512;
+            ctx_params.n_batch = n_batch;
             ctx_params.n_threads = n_threads as c_int;
             ctx_params.n_threads_batch = n_threads as c_int;
 
@@ -339,7 +345,7 @@ impl LlamaEngine {
             llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
             llama_sampler_chain_add(sampler, llama_sampler_init_dist(0xFFFFFFFF));
 
-            Ok(Self { model, vocab, ctx, sampler, _n_ctx: n_ctx })
+            Ok(Self { model, vocab, ctx, sampler, _n_ctx: n_ctx, n_batch })
         }
     }
 
@@ -414,10 +420,10 @@ impl LlamaEngine {
     /// Decode a batch of tokens (prefill or single-token generate).
     /// Automatically chunks into n_batch-sized pieces for large prefills.
     pub fn decode(&mut self, tokens: &[llama_token], start_pos: i32) -> Result<(), String> {
-        const N_BATCH: usize = 512;
+        let n_batch = self.n_batch as usize;
 
-        for (chunk_idx, chunk) in tokens.chunks(N_BATCH).enumerate() {
-            let chunk_start = start_pos + (chunk_idx * N_BATCH) as i32;
+        for (chunk_idx, chunk) in tokens.chunks(n_batch).enumerate() {
+            let chunk_start = start_pos + (chunk_idx * n_batch) as i32;
             let is_last_chunk = chunk_start + chunk.len() as i32 >= start_pos + tokens.len() as i32;
             self.decode_batch(chunk, chunk_start, is_last_chunk)?;
         }

@@ -16,6 +16,11 @@ use super::{LlmProvider, LlmResponse, StopReason, OnTextFn};
 /// When `tools` is non-empty, tool instructions and definitions are appended to the
 /// system message. The returned string ends with `<|im_start|>assistant\n` to prompt
 /// the model to generate its next turn.
+///
+/// INVARIANT: The system block (system prompt + tool definitions) MUST always be
+/// the first tokens in the output. This enables KV cache prefix reuse across turns
+/// via `common_prefix_len()`. Do not inject dynamic content (timestamps, turn IDs)
+/// before or within the system block.
 pub fn format_chat_template(system: &str, messages: &[Message], tools: &[ToolDef]) -> String {
     let mut out = String::new();
 
@@ -104,6 +109,7 @@ struct LocalLlmInner {
     open_pattern: Vec<i32>,
     close_pattern: Vec<i32>,
     eakv_seq_len: i32,
+    n_ctx: u32,
     /// Pre-built token ID → string table. Allows text conversion inside the
     /// generation callback without borrowing `engine`.
     vocab_table: Vec<String>,
@@ -111,9 +117,9 @@ struct LocalLlmInner {
 
 #[cfg(feature = "local-llm")]
 impl LocalLlmProvider {
-    pub fn new(model_path: &str, n_ctx: u32, n_threads: u32,
+    pub fn new(model_path: &str, n_ctx: u32, n_batch: u32, n_threads: u32, mlock: bool,
                n_layers: i32, n_kv_heads: i32, head_dim: i32) -> crate::error::Result<Self> {
-        let engine = LlamaEngine::new(model_path, n_ctx, n_threads)
+        let engine = LlamaEngine::new(model_path, n_ctx, n_batch, n_threads, mlock)
             .map_err(|e| crate::error::Error::Llm(e))?;
 
         let kv_cache = EakvCache::new(n_layers, n_kv_heads, head_dim, n_ctx as i32)
@@ -132,6 +138,7 @@ impl LocalLlmProvider {
                 open_pattern,
                 close_pattern,
                 eakv_seq_len: 0,
+                n_ctx,
                 vocab_table,
             }),
         })
@@ -168,6 +175,7 @@ impl LlmProvider for LocalLlmProvider {
         let mut inner = self.inner.lock()
             .map_err(|e| crate::error::Error::Llm(format!("lock poisoned: {e}")))?;
 
+        let t_prefill = std::time::Instant::now();
         let new_tokens = inner.engine.tokenize(&formatted, true);
         let prefix_len = common_prefix_len(&inner.prefilled_tokens, &new_tokens);
 
@@ -181,10 +189,15 @@ impl LlmProvider for LocalLlmProvider {
 
         // Prefill only the new suffix
         let suffix = &new_tokens[prefix_len..];
+        let suffix_len = suffix.len();
         if !suffix.is_empty() {
             inner.engine.decode(suffix, prefix_len as i32)
                 .map_err(|e| crate::error::Error::Llm(e))?;
+        }
+        let prefill_ms = t_prefill.elapsed().as_secs_f64() * 1000.0;
 
+        let t_eakv = std::time::Instant::now();
+        if suffix_len > 0 {
             // Export KV state from llama.cpp -> eakv (Approach A, best-effort)
             let kv_state = inner.engine.export_kv_state();
             let seq_len = inner.eakv_seq_len;
@@ -194,11 +207,14 @@ impl LlmProvider for LocalLlmProvider {
                 inner.eakv_seq_len = inner.kv_cache.seq_len();
             }
         }
+        let eakv_ms = t_eakv.elapsed().as_secs_f64() * 1000.0;
 
         inner.prefilled_tokens = new_tokens.clone();
 
         // Checkpoint eakv before generation (best-effort)
         let _checkpoint = inner.kv_cache.checkpoint();
+
+        eprintln!("eaclaw prefill: {suffix_len} tokens ({prefix_len} reused) in {prefill_ms:.1} ms, eakv sync {eakv_ms:.1} ms [n_ctx={}]", inner.n_ctx);
 
         // Generation loop — runs in C++ for minimal per-token overhead.
         // Single-pass: streaming, tool detection, and content block building all

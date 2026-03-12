@@ -22,7 +22,9 @@ pub struct Config {
     pub backend: Backend,
     pub model_path: Option<String>,
     pub ctx_size: usize,
+    pub batch_size: usize,
     pub threads: usize,
+    pub mlock: bool,
 }
 
 impl Config {
@@ -72,7 +74,12 @@ impl Config {
         let ctx_size = env::var("EACLAW_CTX_SIZE")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(4096);
+            .unwrap_or(2048);
+
+        let batch_size = env::var("EACLAW_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(512);
 
         let threads = env::var("EACLAW_THREADS")
             .ok()
@@ -82,6 +89,11 @@ impl Config {
                     .map(|n| n.get())
                     .unwrap_or(4)
             });
+
+        let mlock = env::var("EACLAW_MLOCK")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
 
         Ok(Self {
             api_key,
@@ -94,7 +106,9 @@ impl Config {
             backend,
             model_path,
             ctx_size,
+            batch_size,
             threads,
+            mlock,
         })
     }
 }
