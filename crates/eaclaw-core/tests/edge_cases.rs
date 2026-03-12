@@ -360,7 +360,9 @@ fn test_identity_config_none_by_default() {
         backend: eaclaw_core::config::Backend::Anthropic,
         model_path: None,
         ctx_size: 4096,
+        batch_size: 512,
         threads: 4,
+        mlock: false,
     };
     assert!(config.identity.is_none());
 }
@@ -378,7 +380,9 @@ fn test_identity_config_some() {
         backend: eaclaw_core::config::Backend::Anthropic,
         model_path: None,
         ctx_size: 4096,
+        batch_size: 512,
         threads: 4,
+        mlock: false,
     };
     assert!(config.identity.as_ref().unwrap().contains("pirate"));
 }

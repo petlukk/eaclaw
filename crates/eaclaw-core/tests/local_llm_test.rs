@@ -22,7 +22,7 @@ mod local_llm_tests {
             None => { eprintln!("Skipping: no model file"); return; }
         };
 
-        let provider = LocalLlmProvider::new(&path, 2048, 4, 36, 2, 128).unwrap();
+        let provider = LocalLlmProvider::new(&path, 2048, 512, 4, false, 36, 2, 128).unwrap();
         let messages = vec![Message {
             role: Role::User,
             content: vec![ContentBlock::Text { text: "Say hello in one word.".into() }],
@@ -44,7 +44,7 @@ mod local_llm_tests {
             None => { eprintln!("Skipping: no model file"); return; }
         };
 
-        let provider = LocalLlmProvider::new(&path, 2048, 4, 36, 2, 128).unwrap();
+        let provider = LocalLlmProvider::new(&path, 2048, 512, 4, false, 36, 2, 128).unwrap();
         let tools = vec![ToolDef {
             name: "calc".into(),
             description: "Evaluate a math expression".into(),
@@ -81,7 +81,7 @@ mod local_llm_tests {
             None => { eprintln!("Skipping: no model file"); return; }
         };
 
-        let provider = LocalLlmProvider::new(&path, 2048, 4, 36, 2, 128).unwrap();
+        let provider = LocalLlmProvider::new(&path, 2048, 512, 4, false, 36, 2, 128).unwrap();
 
         let messages1 = vec![Message {
             role: Role::User,

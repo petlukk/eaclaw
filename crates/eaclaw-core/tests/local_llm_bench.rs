@@ -31,7 +31,7 @@ mod bench {
 
         // 1. Model load time
         let t0 = Instant::now();
-        let provider = LocalLlmProvider::new(&path, 4096, 4, 36, 2, 128).unwrap();
+        let provider = LocalLlmProvider::new(&path, 4096, 512, 4, false, 36, 2, 128).unwrap();
         let load_ms = t0.elapsed().as_millis();
         println!("\n=== Local Inference Benchmark ===");
         println!("Model load:        {load_ms} ms");
