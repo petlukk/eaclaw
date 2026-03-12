@@ -29,18 +29,25 @@ pub fn format_chat_template(system: &str, messages: &[Message], tools: &[ToolDef
     out.push_str(system);
 
     if !tools.is_empty() {
-        out.push_str("\n\nYou have access to the following tools. To call a tool, output:\n\n");
-        out.push_str("<tool_call>\n");
-        out.push_str("{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}\n");
-        out.push_str("</tool_call>\n");
-        out.push_str("\nAvailable tools:\n");
+        out.push_str("\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\n");
+        out.push_str("You are provided with function signatures within <tools></tools> XML tags:\n<tools>\n");
         for tool in tools {
-            out.push_str(&format!("- **{}**: {}\n", tool.name, tool.description));
-            out.push_str(&format!(
-                "  Parameters: {}\n",
-                tool.input_schema.to_string()
-            ));
+            let tool_json = serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.input_schema,
+                }
+            });
+            out.push_str(&tool_json.to_string());
+            out.push('\n');
         }
+        out.push_str("</tools>\n\n");
+        out.push_str("For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n");
+        out.push_str("<tool_call>\n");
+        out.push_str("{\"name\": <function-name>, \"arguments\": <args-json-object>}\n");
+        out.push_str("</tool_call>");
     }
 
     out.push_str("\n<|im_end|>\n");
@@ -387,9 +394,13 @@ mod tests {
         let messages = vec![user_msg("What is 2+2?")];
         let result = format_chat_template("You are helpful.", &messages, &tools);
 
-        assert!(result.contains("You have access to the following tools"));
-        assert!(result.contains("**calc**: Calculate math"));
-        assert!(result.contains("Parameters:"));
+        assert!(result.contains("You may call one or more functions"));
+        assert!(result.contains("<tools>"));
+        assert!(result.contains("</tools>"));
+        assert!(result.contains("\"name\":\"calc\""));
+        assert!(result.contains("\"description\":\"Calculate math\""));
+        assert!(result.contains("<tool_call>"));
+        assert!(result.contains("</tool_call>"));
         assert!(result.contains("expr"));
         assert!(result.ends_with("<|im_start|>assistant\n"));
     }
