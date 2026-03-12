@@ -133,6 +133,9 @@ Tools can be invoked directly (bypassing the LLM) or used by the LLM during conv
 | `/translate <lang> <text>` | Translate text to another language |
 | `/define <word>` | Look up a word definition |
 | `/summarize <url>` | Fetch a URL and summarize its content |
+| `/grep <pattern> [path]` | Search files for a regex pattern (`file:line:match` output) |
+| `/git <subcommand> [args]` | Read-only git commands (`status`, `log`, `diff`, `branch`, `show`, `blame`, `stash`) |
+| `/remind <time> <message>` | Set a reminder (e.g. `/remind 30m check deploy &`) |
 
 ### Background Execution
 

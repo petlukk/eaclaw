@@ -1,13 +1,15 @@
 // Command router — hash-based slash command matching.
 //
 // Reads bytes after '/', constructs a simple hash, matches against
-// known command hashes. Handles 2-byte (/ls), 3-byte (/cpu), and
+// known command hashes. Handles 2-byte (/ls), 3-byte (/cpu, /git), and
 // 4-byte commands. ~1 KB instructions, runs in registers.
 //
 // Meta commands: /help(0) /quit(1) /tools(2) /clear(3) /model(4) /profile(5)
 // Tool commands: /time(6) /calc(7) /http(8) /shell(9) /memory(10)
 //                /read(11) /write(12) /ls(13) /json(14) /cpu(15)
 //                /tokens(16) /bench(17) /tasks(18) /recall(19)
+//                /weather(20) /translate(21) /define(22) /summarize(23)
+//                /grep(24) /git(25) /remind(26)
 // Returns -1 for no match.
 
 const SLASH: i32 = 47
@@ -44,6 +46,12 @@ export func match_command(text: *u8, len: i32, out_match: *mut i32) {
             // /cpu: c=99 p=112 u=117
             if hash3 == 99 + 112 * 256 + 117 * 65536 {
                 out_match[0] = 15
+                return
+            }
+
+            // /git: g=103 i=105 t=116
+            if hash3 == 103 + 105 * 256 + 116 * 65536 {
+                out_match[0] = 25
                 return
             }
 
@@ -181,6 +189,18 @@ export func match_command(text: *u8, len: i32, out_match: *mut i32) {
                 // /summ: s=115 u=117 m=109 m=109
                 if hash4 == 115 + 117 * 256 + 109 * 65536 + 109 * 16777216 {
                     out_match[0] = 23
+                    return
+                }
+
+                // /grep: g=103 r=114 e=101 p=112
+                if hash4 == 103 + 114 * 256 + 101 * 65536 + 112 * 16777216 {
+                    out_match[0] = 24
+                    return
+                }
+
+                // /remi: r=114 e=101 m=109 i=105
+                if hash4 == 114 + 101 * 256 + 109 * 65536 + 105 * 16777216 {
+                    out_match[0] = 26
                     return
                 }
             }

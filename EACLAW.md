@@ -4,7 +4,7 @@
 
 eaclaw is an AI agent framework that combines SIMD-accelerated security scanning with streaming LLM integration. Every user message passes through cache-resident Eä kernels for injection detection and secret leak prevention before reaching the LLM. The entire security pipeline runs in single-digit microseconds — six orders of magnitude faster than the LLM call it protects.
 
-**10,324 lines** of Rust + Eä + Go across 62 source files. **230 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime. WhatsApp integration via Go bridge.
+**10,900+ lines** of Rust + Eä + Go across 65 source files. **259 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime. WhatsApp integration via Go bridge.
 
 ---
 
@@ -31,7 +31,7 @@ eaclaw is an AI agent framework that combines SIMD-accelerated security scanning
                         │    [respond]             │                      │
                         │                    ┌─────▼──────────┐          │
                         │                    │  Tool executor  │          │
-                        │                    │  16 built-in│          │
+                        │                    │  19 built-in│          │
                         │                    │  tools          │          │
                         │                    └─────┬──────────┘          │
                         │                          │                      │
@@ -145,6 +145,9 @@ eaclaw/
 │       │   ├── define.rs             #   Word definition via dictionaryapi.dev
 │       │   ├── translate.rs          #   Translation via LLM
 │       │   ├── summarize.rs          #   URL summarization via LLM
+│       │   ├── grep.rs               #   Regex file search (grep -rn)
+│       │   ├── git.rs                #   Read-only git commands
+│       │   ├── remind.rs             #   Timer-based reminders
 │       │   └── echo.rs               #   Echo (test tool)
 │       └── kernels/
 │           ├── mod.rs                #   Module exports + init()
@@ -190,12 +193,12 @@ Eight kernels compiled to shared libraries by the Eä compiler. Safety and routi
 
 ### command_router (1,338 bytes)
 
-Hash-based slash command matching. Reads 4 bytes after `/`, computes `b1 + b2*256 + b3*65536 + b4*16777216`, compares against 24 known hashes. Two-stage verification in Rust prevents hash collisions. Measured at **9 ns/call** (release build, 13-command benchmark).
+Hash-based slash command matching. Reads 2–4 bytes after `/`, computes hash, compares against 27 known hashes. Two-stage verification in Rust prevents hash collisions. Measured at **9 ns/call** (release build, 13-command benchmark).
 
 ```
 Meta:  /help /quit /tools /clear /model /profile /tasks /recall
 Tools: /time /calc /http /shell /memory /read /write /ls /json /cpu /tokens /bench
-       /weather /translate /define /summarize
+       /weather /translate /define /summarize /grep /git /remind
 ```
 
 ### fused_safety (2,024 bytes)
@@ -414,9 +417,12 @@ loop {
 | **translate** | `/translate <lang> <text>` | Translate text (via LLM) |
 | **define** | `/define <word>` | Word definition (via dictionaryapi.dev) |
 | **summarize** | `/summarize <url>` | Fetch and summarize URL (via LLM) |
+| **grep** | `/grep <pattern> [path]` | Regex file search (`file:line:match` output) |
+| **git** | `/git <subcommand> [args]` | Read-only git (`status`, `log`, `diff`, `branch`, `show`, `blame`, `stash`) |
+| **remind** | `/remind <time> <message>` | Timer reminder (use with `&` for background) |
 | **echo** | *(LLM only)* | Returns input unchanged (test tool) |
 
-Background execution: append `&` (e.g., `/shell sleep 5 &`). Pipelines: `/shell ls | /tokens`.
+Background execution: append `&` (e.g., `/shell sleep 5 &`, `/remind 30m check deploy &`). Completed background tasks are shown automatically at the next prompt. Pipelines: `/shell ls | /tokens`.
 
 ---
 
@@ -433,7 +439,7 @@ Background execution: append `&` (e.g., `/shell sleep 5 &`). Pipelines: `/shell 
 | `/tasks` | CMD_TASKS (18) | List background tasks |
 | `/recall` | CMD_RECALL (19) | Search conversation history (SIMD) |
 
-All 24 commands (8 meta + 16 tools) matched by the SIMD command router with two-stage verification (hash + full name check). Measured at **9 ns/call**.
+All 27 commands (8 meta + 19 tools) matched by the SIMD command router with two-stage verification (hash + full name check). Measured at **9 ns/call**.
 
 ---
 
@@ -564,28 +570,28 @@ Safety scanning adds **2–3 microseconds** per turn. Six orders of magnitude fa
 
 | Component | Files | Lines |
 |-----------|------:|------:|
-| Rust — eaclaw-core (src) | 49 | 7,382 |
+| Rust — eaclaw-core (src) | 56 | 9,366 |
 | Rust — eaclaw-cli | 1 | 98 |
-| Rust — integration tests | 3 | 1,007 |
+| Rust — integration tests | 6 | 1,368 |
 | Eä kernels | 7 | 1,325 |
 | Go — WhatsApp bridge | 1 | 229 |
 | Benchmarks | 1 | 283 |
-| **Total** | **62** | **10,324** |
+| **Total** | **72** | **12,386** |
 
 ---
 
 ## Test Results
 
-246 tests across unit tests, integration tests, and edge case tests:
+259 tests across unit tests, integration tests, and edge case tests:
 
 ```
-test result: ok. 170 passed  (unit tests — eaclaw-core lib)
+test result: ok. 183 passed  (unit tests — eaclaw-core lib)
 test result: ok. 33 passed   (edge cases — safety, allowlist, identity, calc)
 test result: ok. 10 passed   (recall — conversation, unicode, large store)
 test result: ok. 2 passed    (recall bench — latency benchmarks)
-test result: ok. 31 passed   (tool integration — all 16 tools + router)
+test result: ok. 31 passed   (tool integration — all 19 tools + router)
 ─────────────────────────────
-         246 passed, 0 failed
+         259 passed, 0 failed
 ```
 
 ---
@@ -595,7 +601,7 @@ test result: ok. 31 passed   (tool integration — all 16 tools + router)
 ```bash
 ./build.sh                          # Compile .ea → .so + build WhatsApp bridge
 cargo build --release               # Build single binary (LTO, embeds kernels)
-cargo test                          # Run all 230 tests (no LD_LIBRARY_PATH needed)
+cargo test                          # Run all 259 tests (no LD_LIBRARY_PATH needed)
 cargo bench                         # Criterion benchmarks
 cargo run --release                 # Start REPL (requires ANTHROPIC_API_KEY)
 cargo run --release -- --whatsapp   # Start WhatsApp mode

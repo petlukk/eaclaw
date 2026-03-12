@@ -136,6 +136,36 @@ pub fn build_tool_params(
             }
             Ok(("summarize", serde_json::json!({"url": arg})))
         }
+        cmd_router::CMD_GREP => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /grep <pattern> [path]".into(),
+                ));
+            }
+            let parts = tokenizer.tokenize_str(arg, 2);
+            let pattern = parts.first().unwrap_or(&"");
+            let path = parts.get(1).unwrap_or(&".");
+            Ok(("grep", serde_json::json!({"pattern": pattern, "path": path})))
+        }
+        cmd_router::CMD_GIT => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /git <status|log|diff|branch|show|blame|stash> [args]".into(),
+                ));
+            }
+            Ok(("git", serde_json::json!({"args": arg})))
+        }
+        cmd_router::CMD_REMIND => {
+            if arg.is_empty() {
+                return Err(crate::error::Error::Tool(
+                    "usage: /remind <time> <message>".into(),
+                ));
+            }
+            let parts = tokenizer.tokenize_str(arg, 2);
+            let time = parts.first().unwrap_or(&"");
+            let message = parts.get(1).unwrap_or(&"");
+            Ok(("remind", serde_json::json!({"time": time, "message": message})))
+        }
         _ => Err(crate::error::Error::Tool(format!(
             "unknown tool command: {cmd_id}"
         ))),

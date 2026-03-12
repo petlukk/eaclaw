@@ -27,12 +27,15 @@ pub const CMD_WEATHER: i32 = 20;
 pub const CMD_TRANSLATE: i32 = 21;
 pub const CMD_DEFINE: i32 = 22;
 pub const CMD_SUMMARIZE: i32 = 23;
+pub const CMD_GREP: i32 = 24;
+pub const CMD_GIT: i32 = 25;
+pub const CMD_REMIND: i32 = 26;
 /// No match:
 pub const CMD_NONE: i32 = -1;
 
 /// First and last tool command IDs.
 pub const CMD_TOOL_FIRST: i32 = CMD_TIME;
-pub const CMD_TOOL_LAST: i32 = CMD_SUMMARIZE;
+pub const CMD_TOOL_LAST: i32 = CMD_REMIND;
 
 /// Full command names for two-stage verification.
 const ALL_CMD_NAMES: &[(i32, &str)] = &[
@@ -60,6 +63,9 @@ const ALL_CMD_NAMES: &[(i32, &str)] = &[
     (CMD_TRANSLATE, "translate"),
     (CMD_DEFINE, "define"),
     (CMD_SUMMARIZE, "summarize"),
+    (CMD_GREP, "grep"),
+    (CMD_GIT, "git"),
+    (CMD_REMIND, "remind"),
 ];
 
 /// Match a slash command using the SIMD kernel.
@@ -142,6 +148,9 @@ pub fn command_name(id: i32) -> Option<&'static str> {
         CMD_TRANSLATE => Some("translate"),
         CMD_DEFINE => Some("define"),
         CMD_SUMMARIZE => Some("summarize"),
+        CMD_GREP => Some("grep"),
+        CMD_GIT => Some("git"),
+        CMD_REMIND => Some("remind"),
         _ => None,
     }
 }
@@ -427,5 +436,41 @@ mod tests {
         let (id, arg) = match_command_verified(b"/summarize https://example.com");
         assert_eq!(id, CMD_SUMMARIZE);
         assert_eq!(arg, b"https://example.com");
+    }
+
+    #[test]
+    fn test_grep() {
+        assert_eq!(match_command(b"/grep"), CMD_GREP);
+    }
+
+    #[test]
+    fn test_verified_grep_with_arg() {
+        let (id, arg) = match_command_verified(b"/grep TODO src/");
+        assert_eq!(id, CMD_GREP);
+        assert_eq!(arg, b"TODO src/");
+    }
+
+    #[test]
+    fn test_git() {
+        assert_eq!(match_command(b"/git"), CMD_GIT);
+    }
+
+    #[test]
+    fn test_verified_git_with_arg() {
+        let (id, arg) = match_command_verified(b"/git log --oneline -5");
+        assert_eq!(id, CMD_GIT);
+        assert_eq!(arg, b"log --oneline -5");
+    }
+
+    #[test]
+    fn test_remind() {
+        assert_eq!(match_command(b"/remind"), CMD_REMIND);
+    }
+
+    #[test]
+    fn test_verified_remind_with_arg() {
+        let (id, arg) = match_command_verified(b"/remind 5m check deploy");
+        assert_eq!(id, CMD_REMIND);
+        assert_eq!(arg, b"5m check deploy");
     }
 }

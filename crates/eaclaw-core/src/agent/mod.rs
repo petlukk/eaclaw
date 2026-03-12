@@ -104,6 +104,25 @@ impl Agent {
                 None => break,
             };
 
+            // Notify about background tasks that completed since last prompt
+            for task in self.bg_tasks.take_new_completions() {
+                let note = match &task.status {
+                    crate::agent::background::TaskStatus::Done(output) => {
+                        let preview = if output.len() > 200 {
+                            format!("{}...", &output[..200])
+                        } else {
+                            output.clone()
+                        };
+                        format!("[{}] {} done: {preview}", task.id, task.name)
+                    }
+                    crate::agent::background::TaskStatus::Failed(err) => {
+                        format!("[{}] {} failed: {err}", task.id, task.name)
+                    }
+                    _ => continue,
+                };
+                channel.send(&note).await;
+            }
+
             // Pipeline detection: split on " | /" before routing
             if msg.starts_with(&self.config.command_prefix) && msg.contains(" | /") {
                 match self.execute_pipeline(&msg, channel).await {
@@ -500,6 +519,7 @@ Tools:
   /memory <action> [key] [value]   /read <path>   /write <path> <content>
   /ls [path]  /json <action> <input> [path]  /tokens <text>  /bench <target>
   /weather <city>  /translate <lang> <text>  /define <word>  /summarize <url>
+  /grep <pattern> [path]  /git <subcommand> [args]  /remind <time> <message>
 
 Background: append & (e.g. /shell sleep 5 &)
 Pipelines: /shell ls | /tokens

@@ -28,6 +28,7 @@ pub struct TaskTable {
 struct TaskTableInner {
     next_id: u32,
     tasks: HashMap<u32, BackgroundTask>,
+    notified: std::collections::HashSet<u32>,
 }
 
 impl TaskTable {
@@ -36,6 +37,7 @@ impl TaskTable {
             inner: Arc::new(Mutex::new(TaskTableInner {
                 next_id: 1,
                 tasks: HashMap::new(),
+                notified: std::collections::HashSet::new(),
             })),
         }
     }
@@ -85,21 +87,19 @@ impl TaskTable {
         tasks
     }
 
-    /// Get and clear completed tasks (for notification).
-    pub fn drain_completed(&self) -> Vec<BackgroundTask> {
-        let inner = self.inner.lock().unwrap();
-        let completed: Vec<u32> = inner
-            .tasks
-            .iter()
-            .filter(|(_, t)| !matches!(t.status, TaskStatus::Running))
-            .map(|(id, _)| *id)
-            .collect();
-        // Only drain tasks that are done/failed and have been listed at least once
-        // For now, just return them without removing
-        completed
-            .iter()
-            .filter_map(|id| inner.tasks.get(id).cloned())
-            .collect()
+    /// Return tasks that completed since the last call to this method.
+    pub fn take_new_completions(&self) -> Vec<BackgroundTask> {
+        let mut inner = self.inner.lock().unwrap();
+        let mut result = Vec::new();
+        for (id, task) in &inner.tasks {
+            if !matches!(task.status, TaskStatus::Running) && !inner.notified.contains(id) {
+                result.push(task.clone());
+            }
+        }
+        for task in &result {
+            inner.notified.insert(task.id);
+        }
+        result
     }
 
     /// Format task list for display.

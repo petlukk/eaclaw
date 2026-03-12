@@ -2,11 +2,14 @@ pub mod bench_tool;
 pub mod calc;
 pub mod cpu;
 pub mod define;
+pub mod git;
+pub mod grep;
 pub mod http;
 pub mod json_tool;
 pub mod ls;
 pub mod memory;
 pub mod read_file;
+pub mod remind;
 pub mod shell;
 pub mod summarize;
 pub mod time;
@@ -111,6 +114,9 @@ impl ToolRegistry {
         reg.register(Arc::new(bench_tool::BenchTool));
         reg.register(Arc::new(weather::WeatherTool::new(Vec::new())));
         reg.register(Arc::new(define::DefineTool::new(Vec::new())));
+        reg.register(Arc::new(grep::GrepTool));
+        reg.register(Arc::new(git::GitTool));
+        reg.register(Arc::new(remind::RemindTool));
         reg
     }
 
@@ -132,6 +138,9 @@ impl ToolRegistry {
         reg.register(Arc::new(bench_tool::BenchTool));
         reg.register(Arc::new(weather::WeatherTool::new(hosts.clone())));
         reg.register(Arc::new(define::DefineTool::new(hosts.clone())));
+        reg.register(Arc::new(grep::GrepTool));
+        reg.register(Arc::new(git::GitTool));
+        reg.register(Arc::new(remind::RemindTool));
         reg.register(Arc::new(translate::TranslateTool::new(llm.clone())));
         reg.register(Arc::new(summarize::SummarizeTool::new(llm, hosts)));
         reg
