@@ -196,8 +196,10 @@ The trigger name matches `AGENT_NAME` (case-insensitive).
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model to use (cloud mode) |
 | `EACLAW_BACKEND` | `anthropic` | `anthropic` (cloud) or `local` (llama.cpp) |
 | `EACLAW_MODEL_PATH` | `~/.eaclaw/models/qwen2.5-3b-instruct-q4_k_m.gguf` | GGUF model file (local mode) |
-| `EACLAW_CTX_SIZE` | `4096` | Context window size (local mode) |
+| `EACLAW_CTX_SIZE` | `2048` | Context window size in tokens (local mode) |
+| `EACLAW_BATCH_SIZE` | `512` | Prefill batch size (local mode) |
 | `EACLAW_THREADS` | CPU count | Inference threads (local mode) |
+| `EACLAW_MLOCK` | `0` | Set to `1` to pin model in RAM (needs `ulimit -l unlimited`) |
 | `AGENT_NAME` | `eaclaw` | Agent display name and trigger word |
 | `MAX_TURNS` | `10` | Max tool-use turns per conversation message |
 | `COMMAND_PREFIX` | `/` | Prefix for slash commands |
@@ -243,17 +245,21 @@ All kernels use `u8x16` SIMD (SSE2), keeping instruction footprint small:
 
 The safety scan adds **~2 µs** of latency to every message — invisible next to the LLM round-trip.
 
-### Local Inference (Qwen2.5-3B Q4_K_M, 4 threads)
+### Local Inference (Qwen2.5-3B Q4_K_M, 2-core VPS)
 
-| Metric | eaclaw | llama.cpp standalone |
-|--------|--------|---------------------|
-| Model load | **1.9s** | 3.7s |
-| Decode (pure generation) | **8.0 tok/s** | 9.1 tok/s |
-| End-to-end (incl. prefill) | 3.5 tok/s | — |
-| Decode with KV reuse | **7.9 tok/s** | N/A (restarts each time) |
-| Tool-call round-trip | 6.4s | N/A |
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Model load | **1.9s** | mmap'd, fast on warm page cache |
+| Decode throughput | **9.7 tok/s** | Memory-bandwidth-bound (single-token) |
+| Prefill throughput | **31 tok/s** | Batched, scales with core count |
+| End-to-end first turn | 3.9 tok/s | Prefill-dominated on low core count |
+| End-to-end second turn | 4.5 tok/s | KV prefix reuse saves ~35% prefill |
+| Tool-call round-trip | 5.3s | Including 100-token prefill |
+| eakv KV sync | 2-8 ms | Negligible overhead |
 
-eaclaw reaches **~90% of standalone llama.cpp** decode speed. The generation loop runs in C++ with a pre-built vocab lookup table for single-pass streaming and tool detection — no replay pass or per-token string conversion through the FFI boundary. Multi-turn conversations get free KV cache reuse via eakv checkpointing.
+The generation loop runs in C++ with a pre-built vocab lookup table for single-pass streaming and tool detection — no replay pass or per-token FFI overhead. Multi-turn conversations get free KV cache prefix reuse via eakv checkpointing.
+
+**Scaling note:** These numbers are from a 2-core VPS where prefill is memory-bandwidth-bound. Prefill throughput scales strongly with core count (more cores overlap compute with dequantization loads). On 4+ core machines, expect significantly lower first-response latency. Decode throughput (~9 tok/s) is bandwidth-bound in a different way and won't scale as dramatically — for latency-sensitive workloads, use the cloud backend.
 
 ## Architecture
 
