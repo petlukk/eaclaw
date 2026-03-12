@@ -206,6 +206,23 @@ The trigger name matches `AGENT_NAME` (case-insensitive).
 | `AGENT_NAME` | `eaclaw` | Agent display name and trigger word |
 | `MAX_TURNS` | `10` | Max tool-use turns per conversation message |
 | `COMMAND_PREFIX` | `/` | Prefix for slash commands |
+| `EACLAW_SHELL_POLICY` | `safe` | Shell command policy: `open`, `safe`, or `strict` |
+
+### Shell Policy
+
+Controls what `/shell` commands the agent can execute:
+
+| Mode | Read-only | Write | Destructive |
+|------|-----------|-------|-------------|
+| `open` | allow | allow | allow |
+| `safe` (default) | allow | allow | **block** |
+| `strict` | allow | **block** | **block** |
+
+- **Read-only**: `ls`, `cat`, `grep`, `git log`, `ps`, `df`, etc.
+- **Write**: `cp`, `mv`, `mkdir`, `chmod`, `git push`, `pip install`, etc.
+- **Destructive**: `rm -rf`, `mkfs`, `dd`, `shutdown`, fork bombs, etc.
+
+Set via `EACLAW_SHELL_POLICY=safe` or `~/.eaclaw/shell_policy` file.
 
 ### Identity
 

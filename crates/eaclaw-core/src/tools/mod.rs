@@ -21,6 +21,7 @@ pub mod write_file;
 use crate::config::Config;
 use crate::error::Result;
 use crate::llm::{LlmProvider, ToolDef};
+use crate::safety::shell_guard::{ShellGuard, ShellPolicy};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -103,7 +104,7 @@ impl ToolRegistry {
         reg.register(Arc::new(time::TimeTool));
         reg.register(Arc::new(calc::CalcTool));
         reg.register(Arc::new(http::HttpTool::new(Vec::new())));
-        reg.register(Arc::new(shell::ShellTool));
+        reg.register(Arc::new(shell::ShellTool::new(ShellGuard::new(ShellPolicy::Open))));
         reg.register(Arc::new(memory::MemoryTool::new()));
         reg.register(Arc::new(read_file::ReadFileTool));
         reg.register(Arc::new(write_file::WriteFileTool));
@@ -127,7 +128,7 @@ impl ToolRegistry {
         reg.register(Arc::new(time::TimeTool));
         reg.register(Arc::new(calc::CalcTool));
         reg.register(Arc::new(http::HttpTool::new(hosts.clone())));
-        reg.register(Arc::new(shell::ShellTool));
+        reg.register(Arc::new(shell::ShellTool::new(ShellGuard::new(config.shell_policy))));
         reg.register(Arc::new(memory::MemoryTool::new()));
         reg.register(Arc::new(read_file::ReadFileTool));
         reg.register(Arc::new(write_file::WriteFileTool));

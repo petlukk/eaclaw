@@ -4,7 +4,7 @@
 
 eaclaw is an AI agent framework that combines SIMD-accelerated security scanning with streaming LLM integration. Every user message passes through cache-resident Eä kernels for injection detection and secret leak prevention before reaching the LLM. The entire security pipeline runs in single-digit microseconds — six orders of magnitude faster than the LLM call it protects.
 
-**10,900+ lines** of Rust + Eä + Go across 65 source files. **259 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime. WhatsApp integration via Go bridge.
+**11,000+ lines** of Rust + Eä + Go across 66 source files. **296 tests**. Zero regex. Zero aho-corasick. All pattern matching compiled to native SIMD instructions via the Eä compiler. Single binary — all kernels embedded and auto-extracted at runtime. WhatsApp integration via Go bridge.
 
 ---
 
@@ -126,6 +126,7 @@ eaclaw/
 │       │   ├── mod.rs                #   SafetyLayer (fused SIMD + verify)
 │       │   ├── sanitizer.rs          #   Injection pattern verification (24 patterns)
 │       │   ├── leak_detector.rs      #   Secret leak verification (20+ patterns)
+│       │   ├── shell_guard.rs         #   Shell command risk classifier
 │       │   └── validator.rs          #   Input/output length validation
 │       ├── tools/
 │       │   ├── mod.rs                #   Tool trait + ToolRegistry
@@ -266,7 +267,23 @@ fused SIMD scan (injection + leak detection)
     │
     ├──► blocks tool results containing injection attempts
     └──► blocks tool results containing secrets
+
+Shell command (before execution)
+    │
+    ▼
+ShellGuard classifier (pure Rust, ~ns)
+    │
+    ├──► ALLOW: read-only (ls, cat, grep, git log, ...)
+    ├──► WRITE: recoverable (cp, mv, mkdir, git push, ...)
+    └──► DESTRUCTIVE: irreversible (rm -rf, mkfs, dd, shutdown, ...)
+         Blocked in safe/strict modes.
 ```
+
+### Shell Guard
+
+The `ShellGuard` classifies shell commands by risk before execution. Three policy modes: `open` (no restrictions), `safe` (block destructive), `strict` (read-only). Handles compound commands (`;`, `&&`, `||`, `|`), strips prefixes (`sudo`, env vars), and recognizes subcommand semantics (`git push` = write, `git log` = read, `cargo test` = read, `cargo build` = write).
+
+Configured via `EACLAW_SHELL_POLICY=safe` or `~/.eaclaw/shell_policy`. Default is `safe`.
 
 ### Two-Phase Detection
 
@@ -456,6 +473,7 @@ All 27 commands (8 meta + 19 tools) matched by the SIMD command router with two-
 | `AGENT_NAME` | `eaclaw` | Prompt prefix |
 | `MAX_TURNS` | `10` | Max tool loop iterations |
 | `COMMAND_PREFIX` | `/` | Slash command marker |
+| `EACLAW_SHELL_POLICY` | `safe` | Shell guard: `open`, `safe`, `strict` |
 
 ### WhatsApp
 
@@ -582,16 +600,16 @@ Safety scanning adds **2–3 microseconds** per turn. Six orders of magnitude fa
 
 ## Test Results
 
-259 tests across unit tests, integration tests, and edge case tests:
+296 tests across unit tests, integration tests, and edge case tests:
 
 ```
-test result: ok. 183 passed  (unit tests — eaclaw-core lib)
+test result: ok. 220 passed  (unit tests — eaclaw-core lib, incl. shell guard)
 test result: ok. 33 passed   (edge cases — safety, allowlist, identity, calc)
 test result: ok. 10 passed   (recall — conversation, unicode, large store)
 test result: ok. 2 passed    (recall bench — latency benchmarks)
 test result: ok. 31 passed   (tool integration — all 19 tools + router)
 ─────────────────────────────
-         259 passed, 0 failed
+         296 passed, 0 failed
 ```
 
 ---
@@ -601,7 +619,7 @@ test result: ok. 31 passed   (tool integration — all 19 tools + router)
 ```bash
 ./build.sh                          # Compile .ea → .so + build WhatsApp bridge
 cargo build --release               # Build single binary (LTO, embeds kernels)
-cargo test                          # Run all 259 tests (no LD_LIBRARY_PATH needed)
+cargo test                          # Run all 296 tests (no LD_LIBRARY_PATH needed)
 cargo bench                         # Criterion benchmarks
 cargo run --release                 # Start REPL (requires ANTHROPIC_API_KEY)
 cargo run --release -- --whatsapp   # Start WhatsApp mode

@@ -375,6 +375,7 @@ fn test_identity_config_none_by_default() {
         batch_size: 512,
         threads: 4,
         mlock: false,
+        shell_policy: eaclaw_core::safety::shell_guard::ShellPolicy::Safe,
     };
     assert!(config.identity.is_none());
 }
@@ -395,6 +396,7 @@ fn test_identity_config_some() {
         batch_size: 512,
         threads: 4,
         mlock: false,
+        shell_policy: eaclaw_core::safety::shell_guard::ShellPolicy::Safe,
     };
     assert!(config.identity.as_ref().unwrap().contains("pirate"));
 }

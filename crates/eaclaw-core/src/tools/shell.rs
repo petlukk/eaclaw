@@ -1,9 +1,18 @@
 use super::Tool;
+use crate::safety::shell_guard::ShellGuard;
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-pub struct ShellTool;
+pub struct ShellTool {
+    guard: ShellGuard,
+}
+
+impl ShellTool {
+    pub fn new(guard: ShellGuard) -> Self {
+        Self { guard }
+    }
+}
 
 #[async_trait]
 impl Tool for ShellTool {
@@ -32,6 +41,8 @@ impl Tool for ShellTool {
         let cmd = params["command"]
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'command' parameter".into()))?;
+
+        self.guard.check(cmd).map_err(|e| crate::error::Error::Tool(e))?;
 
         let output = Command::new("sh")
             .arg("-c")
@@ -74,6 +85,8 @@ impl Tool for ShellTool {
         let cmd = params["command"]
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'command' parameter".into()))?;
+
+        self.guard.check(cmd).map_err(|e| crate::error::Error::Tool(e))?;
 
         let mut child = Command::new("sh")
             .arg("-c")

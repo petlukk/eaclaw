@@ -2,6 +2,7 @@ use crate::kernels::fused_safety::FusedScanner;
 
 pub mod leak_detector;
 pub mod sanitizer;
+pub mod shell_guard;
 pub mod validator;
 
 /// Result of scanning content through all safety layers.

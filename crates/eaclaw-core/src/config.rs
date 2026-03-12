@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::safety::shell_guard::{self, ShellPolicy};
 use std::env;
 use std::path::PathBuf;
 
@@ -25,6 +26,7 @@ pub struct Config {
     pub batch_size: usize,
     pub threads: usize,
     pub mlock: bool,
+    pub shell_policy: ShellPolicy,
 }
 
 impl Config {
@@ -95,6 +97,8 @@ impl Config {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
+        let shell_policy = shell_guard::load_shell_policy();
+
         Ok(Self {
             api_key,
             model,
@@ -109,6 +113,7 @@ impl Config {
             batch_size,
             threads,
             mlock,
+            shell_policy,
         })
     }
 }
