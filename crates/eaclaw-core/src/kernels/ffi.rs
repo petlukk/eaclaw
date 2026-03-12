@@ -98,6 +98,7 @@ fn extract_kernels() -> Result<PathBuf, String> {
         ("libsanitizer.so", embedded::SANITIZER),
         ("libfused_safety.so", embedded::FUSED_SAFETY),
         ("libsearch.so", embedded::SEARCH),
+        ("libsearch_avx512.so", embedded::SEARCH_AVX512),
     ];
 
     for (name, data) in kernels {
@@ -126,7 +127,21 @@ fn load_kernels(lib_dir: &PathBuf) -> Result<KernelTable, String> {
     let leak_scanner = load("leak_scanner")?;
     let sanitizer = load("sanitizer")?;
     let fused_safety = load("fused_safety")?;
-    let search = load("search")?;
+
+    // Runtime CPU detection: prefer AVX-512 search kernel if available
+    #[cfg(target_arch = "x86_64")]
+    let (search, search_variant) = if is_x86_feature_detected!("avx512f") {
+        match load("search_avx512") {
+            Ok(lib) => (lib, "avx512"),
+            Err(_) => (load("search")?, "sse2"),
+        }
+    } else {
+        (load("search")?, "sse2")
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let (search, search_variant) = (load("search")?, "neon");
+
+    eprintln!("eaclaw kernels: search={search_variant}");
 
     unsafe {
         let sym = |lib: &Library, name: &[u8]| -> Result<usize, String> {

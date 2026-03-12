@@ -219,7 +219,7 @@ Subdomain matching is supported — allowing `example.com` also allows `api.exam
 
 ## Performance
 
-The hot path is designed to stay in L1 cache. Every SIMD kernel fits comfortably — the largest safety kernel is 2 KB of instructions, the command router is 1.3 KB.
+The entire hot path — safety scanning, command routing, conversation recall — fits in L1 icache (27.6 KB total, under the typical 32 KB budget). This means no kernel evicts another during a message turn: the CPU never stalls on instruction fetch across the full scan → route → recall sequence.
 
 | Operation | Input Size | Time | Throughput |
 |-----------|-----------|------|------------|
@@ -229,9 +229,9 @@ The hot path is designed to stay in L1 cache. Every SIMD kernel fits comfortably
 | Full safety layer (SIMD + verify) | 1 KB | **2.4 µs** | 0.4 GB/s |
 | Full safety layer (SIMD + verify) | 100 KB | 262 µs | 0.4 GB/s |
 | Command routing (SIMD hash + verify) | per command | **9 ns** | — |
-| Conversation recall (20 entries) | top-5 query | **1.7 µs** | — |
+| Conversation recall (20 entries) | top-5 query | **1.6 µs** | — |
 
-All kernels use `u8x16` SIMD (SSE2), keeping instruction footprint small:
+Safety and routing kernels use `u8x16` SIMD (SSE2). The search kernel uses `f32x16` AVX-512 on supported CPUs (EPYC, Sapphire Rapids), falling back to `f32x8` AVX on others — runtime CPU detection via CPUID, no recompilation needed.
 
 | Kernel | `.text` size | Fits in |
 |--------|-------------|---------|
@@ -241,7 +241,8 @@ All kernels use `u8x16` SIMD (SSE2), keeping instruction footprint small:
 | `fused_safety` | 2.0 KB | L1 icache |
 | `byte_classifier` | 2.5 KB | L1 icache |
 | `json_scanner` | 2.9 KB | L1 icache |
-| `search` | 23 KB | L2 (multi-function) |
+| `search` | 15.4 KB | L1 icache |
+| **Total hot path** | **27.6 KB** | **L1 icache (32 KB)** |
 
 The safety scan adds **~2 µs** of latency to every message — invisible next to the LLM round-trip.
 
