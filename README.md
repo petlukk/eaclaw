@@ -8,6 +8,15 @@ A high-performance AI assistant powered by SIMD kernels written in [Eä](https:/
 
 > **Note:** The shell guard and safety scanner are defense-in-depth layers, not a security boundary. eaclaw runs with the full permissions of the user. Review your policy (`EACLAW_SHELL_POLICY`, default `safe`) and endpoint allowlist (`~/.eaclaw/allowed_hosts.txt`) before deploying.
 
+## Why eaclaw?
+
+| vs. | eaclaw advantage |
+|-----|-----------------|
+| Claude Code / Cursor | Runs fully local, no API key needed, WhatsApp interface |
+| Ollama + Open WebUI | Built-in tool use, shell safety, KV checkpointing |
+| LangChain agents | Single binary, no Python, SIMD-speed routing, deterministic safety |
+| Shell GPT | Multi-turn agent loop, background tasks, structured tool dispatch |
+
 ## Install
 
 Download the latest binary for your platform from [Releases](https://github.com/petlukk/eaclaw/releases):
