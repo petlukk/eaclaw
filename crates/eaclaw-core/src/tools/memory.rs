@@ -52,7 +52,9 @@ impl Tool for MemoryTool {
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'action' parameter".into()))?;
 
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().map_err(|_| {
+            crate::error::Error::Tool("memory store lock poisoned".into())
+        })?;
 
         match action {
             "write" => {

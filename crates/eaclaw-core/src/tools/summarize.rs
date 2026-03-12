@@ -1,15 +1,16 @@
-use super::Tool;
+use super::{Tool, check_host};
 use crate::llm::{ContentBlock, LlmProvider, Message, Role};
 use async_trait::async_trait;
 use std::sync::Arc;
 
 pub struct SummarizeTool {
     llm: Arc<dyn LlmProvider>,
+    allowed_hosts: Vec<String>,
 }
 
 impl SummarizeTool {
-    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
-        Self { llm }
+    pub fn new(llm: Arc<dyn LlmProvider>, allowed_hosts: Vec<String>) -> Self {
+        Self { llm, allowed_hosts }
     }
 }
 
@@ -43,6 +44,8 @@ impl Tool for SummarizeTool {
         let url = params["url"]
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'url' parameter".into()))?;
+
+        check_host(&self.allowed_hosts, url)?;
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))

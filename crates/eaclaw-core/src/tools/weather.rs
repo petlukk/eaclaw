@@ -1,7 +1,15 @@
-use super::Tool;
+use super::{Tool, check_host};
 use async_trait::async_trait;
 
-pub struct WeatherTool;
+pub struct WeatherTool {
+    allowed_hosts: Vec<String>,
+}
+
+impl WeatherTool {
+    pub fn new(allowed_hosts: Vec<String>) -> Self {
+        Self { allowed_hosts }
+    }
+}
 
 #[async_trait]
 impl Tool for WeatherTool {
@@ -32,6 +40,7 @@ impl Tool for WeatherTool {
             .ok_or_else(|| crate::error::Error::Tool("missing 'city' parameter".into()))?;
 
         let url = format!("https://wttr.in/{}?format=%l:+%C+%t+%h+%w", urlencode(city));
+        check_host(&self.allowed_hosts, &url)?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()

@@ -326,8 +326,8 @@ impl LlmProvider for LocalLlmProvider {
             }) {
                 if let ContentBlock::Text { text } = &content_blocks[idx] {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(text.trim()) {
-                        if val.get("name").and_then(|n| n.as_str()).is_some() {
-                            let name = val["name"].as_str().unwrap().to_string();
+                        if let Some(name_str) = val.get("name").and_then(|n| n.as_str()) {
+                            let name = name_str.to_string();
                             let arguments = val.get("arguments")
                                 .cloned()
                                 .unwrap_or(serde_json::Value::Object(Default::default()));

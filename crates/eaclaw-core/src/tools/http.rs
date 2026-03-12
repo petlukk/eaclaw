@@ -1,4 +1,4 @@
-use super::Tool;
+use super::{Tool, check_host};
 use async_trait::async_trait;
 use futures::StreamExt;
 use std::time::Duration;
@@ -13,30 +13,6 @@ pub struct HttpTool {
 impl HttpTool {
     pub fn new(allowed_hosts: Vec<String>) -> Self {
         Self { allowed_hosts }
-    }
-
-    fn check_host(&self, url: &str) -> crate::error::Result<()> {
-        if self.allowed_hosts.is_empty() {
-            return Ok(());
-        }
-        let host = url
-            .split("://")
-            .nth(1)
-            .unwrap_or(url)
-            .split('/')
-            .next()
-            .unwrap_or("")
-            .split(':')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
-        if self.allowed_hosts.iter().any(|h| host == *h || host.ends_with(&format!(".{h}"))) {
-            Ok(())
-        } else {
-            Err(crate::error::Error::Tool(format!(
-                "host '{host}' not in allowed list. Set EACLAW_ALLOWED_HOSTS or ~/.eaclaw/allowed_hosts.txt"
-            )))
-        }
     }
 }
 
@@ -68,7 +44,7 @@ impl Tool for HttpTool {
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'url' parameter".into()))?;
 
-        self.check_host(url)?;
+        check_host(&self.allowed_hosts, url)?;
         let client = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
             .build()
@@ -101,7 +77,7 @@ impl Tool for HttpTool {
             .as_str()
             .ok_or_else(|| crate::error::Error::Tool("missing 'url' parameter".into()))?;
 
-        self.check_host(url)?;
+        check_host(&self.allowed_hosts, url)?;
         let client = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
             .build()

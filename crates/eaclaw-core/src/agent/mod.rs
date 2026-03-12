@@ -118,7 +118,13 @@ impl Agent {
 
             // Handle /tasks meta command
             if cmd_id == cmd_router::CMD_TASKS {
-                channel.send(&self.bg_tasks.format_list()).await;
+                let list = self.bg_tasks.format_list();
+                let scan = self.safety.scan_output(&list);
+                if let Some(reason) = scan.block_reason() {
+                    channel.send(&format!("Task output blocked: {reason}. Check tasks individually.")).await;
+                } else {
+                    channel.send(&list).await;
+                }
                 continue;
             }
 
@@ -412,9 +418,17 @@ impl Agent {
             });
 
             if tool_uses.is_empty() || response.stop_reason != StopReason::ToolUse {
-                // Index assistant response for recall
+                // Safety scan LLM response text before displaying
                 if !text_parts.is_empty() {
                     let full_text = text_parts.join("");
+                    let scan = self.safety.scan_output(&full_text);
+                    if let Some(reason) = scan.block_reason() {
+                        channel
+                            .send(&format!("LLM response blocked: {reason}."))
+                            .await;
+                        break;
+                    }
+                    // Index assistant response for recall
                     if !full_text.trim().is_empty() {
                         self.recall_store.insert(&full_text);
                     }

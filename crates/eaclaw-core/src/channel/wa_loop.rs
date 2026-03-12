@@ -304,7 +304,12 @@ async fn run_llm_turn(
         // Only return text when we're done with tools — intermediate text
         // (e.g. "Let me check that") is thinking, not the real answer.
         if tool_uses.is_empty() || response.stop_reason != StopReason::ToolUse {
-            return Ok(text_parts.join(""));
+            let full_text = text_parts.join("");
+            let scan = safety.scan_output(&full_text);
+            if let Some(reason) = scan.block_reason() {
+                return Ok(format!("LLM response blocked: {reason}."));
+            }
+            return Ok(full_text);
         }
 
         // Execute tools

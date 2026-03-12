@@ -22,6 +22,31 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Shared host allowlist check — reused by http, weather, define, summarize tools.
+pub fn check_host(allowed_hosts: &[String], url: &str) -> Result<()> {
+    if allowed_hosts.is_empty() {
+        return Ok(());
+    }
+    let host = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    if allowed_hosts.iter().any(|h| host == *h || host.ends_with(&format!(".{h}"))) {
+        Ok(())
+    } else {
+        Err(crate::error::Error::Tool(format!(
+            "host '{host}' not in allowed list. Set EACLAW_ALLOWED_HOSTS or ~/.eaclaw/allowed_hosts.txt"
+        )))
+    }
+}
+
 /// Tool trait — each tool provides a JSON schema and an execute method.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -84,17 +109,18 @@ impl ToolRegistry {
         reg.register(Arc::new(cpu::CpuTool));
         reg.register(Arc::new(tokens::TokensTool));
         reg.register(Arc::new(bench_tool::BenchTool));
-        reg.register(Arc::new(weather::WeatherTool));
-        reg.register(Arc::new(define::DefineTool));
+        reg.register(Arc::new(weather::WeatherTool::new(Vec::new())));
+        reg.register(Arc::new(define::DefineTool::new(Vec::new())));
         reg
     }
 
     /// Create a registry with all default tools using config.
     pub fn with_defaults(config: &Config, llm: Arc<dyn LlmProvider>) -> Self {
         let mut reg = Self::new();
+        let hosts = config.allowed_hosts.clone();
         reg.register(Arc::new(time::TimeTool));
         reg.register(Arc::new(calc::CalcTool));
-        reg.register(Arc::new(http::HttpTool::new(config.allowed_hosts.clone())));
+        reg.register(Arc::new(http::HttpTool::new(hosts.clone())));
         reg.register(Arc::new(shell::ShellTool));
         reg.register(Arc::new(memory::MemoryTool::new()));
         reg.register(Arc::new(read_file::ReadFileTool));
@@ -104,10 +130,10 @@ impl ToolRegistry {
         reg.register(Arc::new(cpu::CpuTool));
         reg.register(Arc::new(tokens::TokensTool));
         reg.register(Arc::new(bench_tool::BenchTool));
-        reg.register(Arc::new(weather::WeatherTool));
-        reg.register(Arc::new(define::DefineTool));
+        reg.register(Arc::new(weather::WeatherTool::new(hosts.clone())));
+        reg.register(Arc::new(define::DefineTool::new(hosts.clone())));
         reg.register(Arc::new(translate::TranslateTool::new(llm.clone())));
-        reg.register(Arc::new(summarize::SummarizeTool::new(llm)));
+        reg.register(Arc::new(summarize::SummarizeTool::new(llm, hosts)));
         reg
     }
 

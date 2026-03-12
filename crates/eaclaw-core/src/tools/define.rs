@@ -1,7 +1,15 @@
-use super::Tool;
+use super::{Tool, check_host};
 use async_trait::async_trait;
 
-pub struct DefineTool;
+pub struct DefineTool {
+    allowed_hosts: Vec<String>,
+}
+
+impl DefineTool {
+    pub fn new(allowed_hosts: Vec<String>) -> Self {
+        Self { allowed_hosts }
+    }
+}
 
 #[async_trait]
 impl Tool for DefineTool {
@@ -32,6 +40,7 @@ impl Tool for DefineTool {
             .ok_or_else(|| crate::error::Error::Tool("missing 'word' parameter".into()))?;
 
         let url = format!("https://api.dictionaryapi.dev/api/v2/entries/en/{word}");
+        check_host(&self.allowed_hosts, &url)?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()

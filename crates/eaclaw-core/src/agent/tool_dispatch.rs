@@ -194,6 +194,15 @@ impl Agent {
             let tool_ms = tool_start.elapsed().as_millis() as u64;
             tool_execs.push((tool_name.to_string(), tool_ms));
 
+            // Safety scan intermediate pipeline outputs
+            let scan = self.safety.scan_output(&output);
+            if let Some(reason) = scan.block_reason() {
+                channel
+                    .send(&format!("Pipeline stage {} blocked: {reason}.", i + 1))
+                    .await;
+                return Ok(());
+            }
+
             pipe_data = Some(output);
         }
 
