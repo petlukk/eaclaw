@@ -280,7 +280,7 @@ pub struct LlamaEngine {
     vocab: *const llama_vocab,
     ctx: *mut llama_context,
     sampler: *mut llama_sampler,
-    n_ctx: u32,
+    _n_ctx: u32,
 }
 
 // Safety: LlamaEngine is used behind a Mutex in LocalLlmProvider,
@@ -339,7 +339,7 @@ impl LlamaEngine {
             llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
             llama_sampler_chain_add(sampler, llama_sampler_init_dist(0xFFFFFFFF));
 
-            Ok(Self { model, vocab, ctx, sampler, n_ctx })
+            Ok(Self { model, vocab, ctx, sampler, _n_ctx: n_ctx })
         }
     }
 

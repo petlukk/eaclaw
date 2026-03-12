@@ -4,6 +4,7 @@ use std::ffi::c_int;
 use std::os::raw::c_uchar;
 
 // Opaque type
+#[allow(non_camel_case_types)]
 pub enum eakv_cache_t {}
 
 pub const EAKV_OK: c_int = 0;
