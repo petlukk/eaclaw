@@ -73,7 +73,7 @@ impl Config {
         let ctx_size = env::var("EACLAW_CTX_SIZE")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(4096);
+            .unwrap_or(2048);
 
         let batch_size = env::var("EACLAW_BATCH_SIZE")
             .ok()

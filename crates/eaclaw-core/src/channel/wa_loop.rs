@@ -85,7 +85,7 @@ pub async fn run(
             Action::Forward {
                 text,
                 sender_name,
-                context,
+                context: raw_context,
             } => {
                 // Strip trigger prefix to get the actual command/message
                 let stripped = strip_trigger(&text, &config.agent_name);
@@ -137,6 +137,25 @@ pub async fn run(
                 eprintln!(
                     "  ⚡ Triggered by {sender_name} — calling LLM..."
                 );
+
+                // Truncate recall context to fit within ctx budget.
+                // Reserve tokens for: system prompt (~200), user message (~100),
+                // response generation (512). Rough estimate: 1 token ≈ 4 chars.
+                let mut context = raw_context;
+                let ctx_budget = config.ctx_size.saturating_sub(812);
+                let char_budget = ctx_budget * 4;
+                let mut total_chars: usize = 0;
+                let mut keep_from = 0;
+                for (i, line) in context.iter().enumerate().rev() {
+                    total_chars += line.len();
+                    if total_chars > char_budget {
+                        keep_from = i + 1;
+                        break;
+                    }
+                }
+                if keep_from > 0 {
+                    context.drain(..keep_from);
+                }
 
                 // Build conversation with context
                 let mut messages = Vec::new();
