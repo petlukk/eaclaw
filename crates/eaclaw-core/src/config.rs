@@ -22,6 +22,7 @@ pub struct Config {
     pub backend: Backend,
     pub model_path: Option<String>,
     pub ctx_size: usize,
+    pub batch_size: usize,
     pub threads: usize,
 }
 
@@ -74,6 +75,11 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(4096);
 
+        let batch_size = env::var("EACLAW_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(512);
+
         let threads = env::var("EACLAW_THREADS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -94,6 +100,7 @@ impl Config {
             backend,
             model_path,
             ctx_size,
+            batch_size,
             threads,
         })
     }
