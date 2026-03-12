@@ -2,7 +2,7 @@
 
 A high-performance AI assistant powered by SIMD kernels written in [Eä](https://github.com/petlukk/eacompute) and Rust. Uses the Anthropic Claude API or local LLM inference (llama.cpp + eakv) for conversation, with embedded SIMD acceleration for safety scanning, command routing, and conversation recall.
 
-**Every kernel fits in L1 cache.** The entire hot path — safety scanning, command routing, conversation recall — runs at memory bandwidth with zero allocations on the fast path.
+**Every kernel fits in L1 cache.** The entire hot path — safety scanning, command routing, conversation recall — runs at memory bandwidth with zero allocations on the fast path. Local inference uses llama.cpp with [eakv](https://github.com/petlukk/eakv) KV cache compression and O(1) checkpointing, so tool-call loops resume generation without re-prefilling the full context.
 
 > **Warning:** eaclaw is **not sandboxed**. The agent can execute shell commands, read/write files, and make HTTP requests with the full permissions of the user running it. The SIMD safety layer scans for prompt injection and secret leaks, but it is not a security boundary. Do not run eaclaw on systems with sensitive data unless you understand the risks. Use endpoint allowlisting (`~/.eaclaw/allowed_hosts.txt`) and review the tools available before use.
 
