@@ -1,6 +1,6 @@
 # eaclaw
 
-A high-performance AI agent powered by SIMD kernels ([Eä](https://github.com/petlukk/eacompute)) and Rust. Cloud or fully local — no API key needed.
+A high-performance AI agent powered by SIMD kernels ([Eä](https://github.com/petlukk/eacompute)) and Rust. The entire hot path — safety scanning, command routing, conversation recall — fits in L1 cache (27.6 KB). Cloud or fully local — no API key needed.
 
 | vs. | eaclaw advantage |
 |-----|-----------------|
