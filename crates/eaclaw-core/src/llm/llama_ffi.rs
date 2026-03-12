@@ -262,14 +262,16 @@ extern "C" {
 }
 
 /// Suppress llama.cpp's verbose logging to stderr.
-/// Only warnings (3) and errors (4) are forwarded.
+/// Only errors (4) are forwarded. Warnings are suppressed because llama.cpp
+/// emits noisy but harmless warnings for Qwen2.5 GGUF metadata quirks and
+/// context size being smaller than training context.
 unsafe extern "C" fn quiet_log_callback(level: c_int, text: *const c_char, _user_data: *mut c_void) {
     // GGML_LOG_LEVEL: NONE=0, DEBUG=1, INFO=2, WARN=3, ERROR=4, CONT=5
-    if level >= 3 && level <= 4 {
+    if level == 4 {
         let msg = std::ffi::CStr::from_ptr(text).to_string_lossy();
         let msg = msg.trim_end();
         if !msg.is_empty() {
-            eprintln!("llama.cpp: {msg}");
+            eprintln!("llama.cpp error: {msg}");
         }
     }
 }
