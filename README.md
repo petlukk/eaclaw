@@ -287,7 +287,27 @@ Every user message passes through the SIMD safety scanner before reaching the LL
 Input → fused_safety kernel → injection verify → leak verify → LLM
 ```
 
-Tool outputs are also scanned for secret leaks before display.
+Tool outputs are also scanned for injection attempts and secret leaks before being fed back to the LLM.
+
+### KV Cache Compression (eakv)
+
+Local inference uses [eakv](https://github.com/petlukk/eakv), a Q4 KV cache quantization library with fused attention kernels written in Eä.
+
+**Why not just use llama.cpp's KV cache?** Vanilla llama.cpp stores the KV cache in F16 — fine for large machines, but on a 2 GB VPS running a 3B model, every megabyte counts. eakv quantizes the KV cache to Q4_1 (4-bit with per-group scale and bias) and runs attention directly on packed nibbles — no decompression step.
+
+| | llama.cpp F16 | eakv Q4 | Benefit |
+|--|---------------|---------|---------|
+| KV cache size (3B, 2K ctx) | ~8 MB | ~2.5 MB | **3.2x smaller** |
+| Attention speed | baseline | 5x faster | Fused dot-product on packed Q4 |
+| Tool-call loop | re-prefill ~40 ms | delta prefill ~5 ms | **8x faster** |
+
+**O(1) checkpointing** is the key feature for agent workloads. The KV cache is append-only — a checkpoint is just a `seq_len` integer. Restoring a checkpoint resets the counter with no data copy. This means:
+
+- Multi-turn conversations reuse the KV prefix (system prompt + earlier turns are never re-prefilled)
+- Tool-call loops only prefill the new tokens (tool result + assistant prefix), not the entire context
+- Checkpoint/restore cost: **< 1 µs**
+
+The fused attention kernels (`fused_k_score`, `fused_v_sum`) operate directly on Q4 nibbles using AVX-512/AVX2 with 2-position loop unrolling and grouped-query attention (GQA) support. Pre-compiled kernel `.o` files are checked into the repo — no Eä compiler needed for builds.
 
 ### Conversation Recall
 
