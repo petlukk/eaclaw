@@ -296,7 +296,7 @@ pub struct GenerateResult {
 
 impl LlamaEngine {
     /// Load model and create context.
-    pub fn new(model_path: &str, n_ctx: u32, n_batch: u32, n_threads: u32) -> Result<Self, String> {
+    pub fn new(model_path: &str, n_ctx: u32, n_batch: u32, n_threads: u32, mlock: bool) -> Result<Self, String> {
         use std::ffi::CString;
 
         let c_path = CString::new(model_path)
@@ -308,10 +308,15 @@ impl LlamaEngine {
 
             let mut model_params = llama_model_default_params();
             model_params.n_gpu_layers = 0; // CPU only
+            model_params.use_mlock = mlock;
 
             let model = llama_model_load_from_file(c_path.as_ptr(), model_params);
             if model.is_null() {
                 return Err(format!("failed to load model: {model_path}"));
+            }
+            if mlock {
+                eprintln!("eaclaw: mlock enabled — if model load was slow or failed, \
+                           check `ulimit -l` or set memlock in /etc/security/limits.conf");
             }
 
             let vocab = llama_model_get_vocab(model);

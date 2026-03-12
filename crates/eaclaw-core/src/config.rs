@@ -24,6 +24,7 @@ pub struct Config {
     pub ctx_size: usize,
     pub batch_size: usize,
     pub threads: usize,
+    pub mlock: bool,
 }
 
 impl Config {
@@ -89,6 +90,11 @@ impl Config {
                     .unwrap_or(4)
             });
 
+        let mlock = env::var("EACLAW_MLOCK")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
         Ok(Self {
             api_key,
             model,
@@ -102,6 +108,7 @@ impl Config {
             ctx_size,
             batch_size,
             threads,
+            mlock,
         })
     }
 }

@@ -76,11 +76,11 @@ fn build_llm(config: &Config) -> Arc<dyn eaclaw_core::llm::LlmProvider> {
                 std::process::exit(1);
             }
             // Qwen2.5-3B: 36 layers, 2 KV heads, 128 head_dim
-            eprintln!("eaclaw local: n_ctx={}, n_batch={}, threads={}",
-                config.ctx_size, config.batch_size, config.threads);
+            eprintln!("eaclaw local: n_ctx={}, n_batch={}, threads={}, mlock={}",
+                config.ctx_size, config.batch_size, config.threads, config.mlock);
             match eaclaw_core::llm::LocalLlmProvider::new(
                 model_path, config.ctx_size as u32, config.batch_size as u32,
-                config.threads as u32, 36, 2, 128,
+                config.threads as u32, config.mlock, 36, 2, 128,
             ) {
                 Ok(p) => Arc::new(p),
                 Err(e) => {

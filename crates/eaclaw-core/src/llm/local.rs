@@ -111,9 +111,9 @@ struct LocalLlmInner {
 
 #[cfg(feature = "local-llm")]
 impl LocalLlmProvider {
-    pub fn new(model_path: &str, n_ctx: u32, n_batch: u32, n_threads: u32,
+    pub fn new(model_path: &str, n_ctx: u32, n_batch: u32, n_threads: u32, mlock: bool,
                n_layers: i32, n_kv_heads: i32, head_dim: i32) -> crate::error::Result<Self> {
-        let engine = LlamaEngine::new(model_path, n_ctx, n_batch, n_threads)
+        let engine = LlamaEngine::new(model_path, n_ctx, n_batch, n_threads, mlock)
             .map_err(|e| crate::error::Error::Llm(e))?;
 
         let kv_cache = EakvCache::new(n_layers, n_kv_heads, head_dim, n_ctx as i32)
